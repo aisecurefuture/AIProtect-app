@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { requestCode, verifyCode, setToken, ApiError } from "@/lib/api";
+import Wordmark from "@/components/Wordmark";
 
 // Passwordless: no password to choose, forget, reuse or leak, and no reset
 // flow to attack. Two steps, one field each.
@@ -35,8 +36,11 @@ export default function SignIn() {
 
   return (
     <div className="mx-auto max-w-sm pt-10">
-      <h1 className="text-2xl font-semibold">AIProtect</h1>
-      <p className="mt-1 text-sm opacity-70">AI security for your everyday devices.</p>
+      <h1 className="sr-only">AIProtect</h1>
+      <Wordmark className="mx-auto block w-56" />
+      <p className="mt-2 text-center text-sm opacity-70">
+        AI security for your everyday devices.
+      </p>
 
       {stage === "email" ? (
         <form onSubmit={send} className="mt-8 space-y-4">
