@@ -23,7 +23,7 @@ check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test
 # first suite to `import main` wins the name for the whole process and every
 # later suite silently asserts against another service's module.
 test:
-	$(PY) -m pytest services/ tests/ -q
+	$(PY) -m pytest services/ apps/ tests/ -q
 
 # The two seams this product is built on. Standalone -- no services, no
 # network, no docker. If either stops holding, the architecture changed and

@@ -163,7 +163,34 @@ services:
     ports:
       - "127.0.0.1:8104:8003"
 
+  api:
+    env_file: ["${CYBERARMOR_ENV_FILE:-.env}"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    build:
+      context: ../
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      AIPROTECT_DATABASE_URL: "${AIPROTECT_DATABASE_URL:-sqlite:////data/aiprotect.db}"
+      AIPROTECT_DETECTION_URL: "http://detection:8002"
+      AIPROTECT_TRUST_GATE_URL: "http://url-trust-gate:8005"
+      DETECTION_API_SECRET: "${AIPROTECT_DETECTION_API_SECRET:?set in aiprotect env}"
+      URL_TRUST_GATE_API_SECRET: "${AIPROTECT_TRUST_GATE_API_SECRET:?set in aiprotect env}"
+      # Peppers the hashes of login codes and refresh tokens. A database read
+      # must not yield a working credential.
+      AIPROTECT_AUTH_PEPPER: "${AIPROTECT_AUTH_PEPPER:?set in aiprotect env}"
+      # Never true outside local development: it returns the emailed sign-in
+      # code in the HTTP response, which makes the code pointless.
+      AIPROTECT_RETURN_LOGIN_CODE: "false"
+    volumes:
+      - api_data:/data
+    depends_on: [detection, url-trust-gate]
+    ports:
+      - "127.0.0.1:8100:8100"
+
 volumes:
   hf_models:
   url_trust_gate_audit_spool:
   audit_data:
+  api_data:

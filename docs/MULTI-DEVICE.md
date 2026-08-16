@@ -151,15 +151,31 @@ plan is genuinely too small, and the app should say something different.
 Both ceilings default to `0` (unlimited) and are set per deployment in
 `infra/docker-compose.yml`.
 
-## Still to build (Prompt 3)
+## Built in Prompt 3 (`apps/api/`)
 
-- Account, subscription, member, device tables; enrollment via QR / deep link.
-- Per-device credentials, issue and revoke.
-- Entitlement checks as FastAPI dependencies — including the cap refusal in
-  rule 1 and the grace state in rule 3.
-- Device re-identification for rule 2.
-- The `x-account-id` / `x-client-id` values the API forwards to detection.
-- Family invites and the Kids preset.
+- Account, subscription, member, device and **surface** tables (`models.py`).
+- Enrollment, join-by-code, reclaim and revocation (`devices.py`).
+- Entitlement states and cap refusal (`entitlements.py`), read from
+  `shared/tiers.json`.
+- Standard / Strict / Kids evaluated by the policy engine as a library
+  (`presets.py`), each rule covered by a known-positive fixture.
+- `x-account-id` and `x-client-id` forwarded on every upstream call
+  (`main.py`, `_upstream_headers`).
+
+**Question 4 answered: a surface joins an existing device by CODE.** The
+already-installed surface issues a six-character code; the new one presents it
+and inherits the same `device_id`. Fingerprint-style convergence was rejected
+as the primary mechanism — a wrong match merges two real machines and the
+failure is invisible. `machine_hint` survives only to *offer* a re-enrolment
+match for confirmation (rule 2), never to decide one.
+
+## Still to build
+
+- Family invites and the Kids preset assignment UI.
+- QR / deep-link wrapper around the enrollment and join codes.
+- Billing: the entitlement state machine is built, but nothing yet moves a
+  subscription between states. That is the billing phase.
+- Activity feed reading from the audit service.
 
 ## Open questions
 

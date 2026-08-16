@@ -58,6 +58,68 @@ def strip_comment(line: str) -> str:
     return line
 
 
+def code_lines(text: str, suffix: str):
+    """Yield (line_no, code) skipping docstrings and block comments.
+
+    Added after the guard flagged the module docstring in apps/api/models.py --
+    a paragraph explaining WHY this product has no tenant. Forcing that
+    explanation to be reworded to appease the checker would make the codebase
+    worse to read, and a guard that does that is a guard someone eventually
+    disables. It should catch a tenant entering the running product, not a
+    sentence about not having one.
+    """
+    in_doc = None          # the triple-quote delimiter we are inside, if any
+    in_block = False       # inside a /* ... */ comment
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw
+
+        if suffix == ".py":
+            rest = line
+            while rest:
+                if in_doc is None:
+                    idx3 = min(
+                        (i for i in (rest.find('"""'), rest.find("'''")) if i != -1),
+                        default=-1,
+                    )
+                    if idx3 == -1:
+                        break
+                    in_doc = rest[idx3:idx3 + 3]
+                    line = line[: line.index(in_doc)] if in_doc in line else ""
+                    rest = rest[idx3 + 3:]
+                    if in_doc in rest:                 # opened and closed here
+                        rest = rest[rest.index(in_doc) + 3:]
+                        in_doc = None
+                        continue
+                    break
+                else:
+                    if in_doc in rest:
+                        rest = rest[rest.index(in_doc) + 3:]
+                        in_doc = None
+                        line = rest
+                        continue
+                    line = ""
+                    break
+            if in_doc is not None:
+                line = ""
+        else:
+            if in_block:
+                if "*/" in line:
+                    line = line[line.index("*/") + 2:]
+                    in_block = False
+                else:
+                    line = ""
+            if "/*" in line:
+                head = line[: line.index("/*")]
+                if "*/" in line[line.index("/*"):]:
+                    tail = line[line.index("/*"):]
+                    line = head + tail[tail.index("*/") + 2:]
+                else:
+                    line = head
+                    in_block = True
+
+        yield n, strip_comment(line)
+
+
 def scan(root: Path) -> list[tuple[Path, int, str]]:
     target = root / GUARDED_ROOT
     if not target.is_dir():
@@ -69,11 +131,12 @@ def scan(root: Path) -> list[tuple[Path, int, str]]:
         if any(part in SKIP_DIRS for part in path.parts):
             continue
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for n, raw in enumerate(lines, 1):
-            code = strip_comment(raw)
+        raw_lines = text.splitlines()
+        for n, code in code_lines(text, path.suffix):
+            raw = raw_lines[n - 1] if n <= len(raw_lines) else ""
             if FORBIDDEN.search(code):
                 try:
                     rel = path.relative_to(root)
@@ -90,6 +153,13 @@ _SELF_TEST_CASES = (
     ("ok_comment.py", "# deliberately no tenant_id in this product\n", False),
     ("ok_device.py", "device_id = enroll()\naccount_id = session.user\n", False),
     ("ok_family.py", "family_id = plan.owner\n", False),
+    # Prose explaining why there is no tenant must not be flagged -- a guard
+    # that forces worse documentation is one somebody eventually disables.
+    ("ok_docstring.py", '"""This product has no tenant_id, by design."""\n', False),
+    ("ok_multiline_doc.py",
+     '"""Header.\n\nWe never store a tenant_id here.\n"""\nx = 1\n', False),
+    # ...but code AFTER a docstring is still checked.
+    ("bad_after_doc.py", '"""Doc about tenants."""\ntenant_id = req.q\n', True),
 )
 
 
