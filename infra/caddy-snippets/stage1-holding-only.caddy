@@ -1,0 +1,73 @@
+# STAGE 1 — certificates and a holding page, no backends.
+#
+# Append to the CyberArmor host's Caddyfile at
+#   /opt/cyberarmor/CyberArmorAi/infra/docker-compose/caddy-config/Caddyfile
+# then reload:
+#   docker compose -f /opt/cyberarmor/CyberArmorAi/infra/docker-compose/docker-compose.yml \
+#     exec caddy caddy reload --config /etc/caddy/Caddyfile
+#
+# WHY THIS STAGE EXISTS. DNS now points six hostnames at that box and none of
+# them have a certificate, so every one of them currently throws a browser
+# security warning -- on a security product's domain. This fixes that today
+# without deploying anything: no AIProtect container has to exist, no port has
+# to be free, and nothing about the CyberArmor site blocks changes.
+#
+# It also gets the certificates issued while the DNS is fresh, so Stage 2 is a
+# reverse_proxy line rather than a reverse_proxy line plus an ACME wait.
+#
+# RISK: near zero. Caddy serves static files from a read-only mount. It adds no
+# memory pressure worth measuring to a 16 GiB box that is already the reason
+# this repository exists -- see docs/DEPLOY.md before deploying anything with a
+# detection service onto it.
+#
+# PREREQUISITE on the box:
+#   mkdir -p /opt/aiprotect/holding
+#   # copy this repo's infra/holding/* into it (index.html + the two PNGs)
+#
+# and add this bind mount to the caddy service in that compose file:
+#   - /opt/aiprotect/holding:/srv/aiprotect-holding:ro
+
+aiprotect.app, www.aiprotect.app, app.aiprotect.app,
+api.aiprotect.app, docs.aiprotect.app, support.aiprotect.app {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	root * /srv/aiprotect-holding
+	file_server
+	# Every path resolves to the holding page, so nothing 404s into something
+	# confusing while the product does not exist yet.
+	try_files {path} /index.html
+}
+
+# ---------------------------------------------------------------------------
+# STAGE 2 — when the AIProtect stack is actually running on this box.
+#
+# Remove app.aiprotect.app and api.aiprotect.app from the list above, and add
+# these two blocks. Keep the rest on the holding page until those sites exist.
+#
+# app.aiprotect.app {
+#     encode zstd gzip
+#     header {
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#         X-Content-Type-Options "nosniff"
+#         X-Frame-Options "DENY"
+#         -Server
+#     }
+#     reverse_proxy 127.0.0.1:3000
+# }
+#
+# api.aiprotect.app {
+#     encode zstd gzip
+#     header {
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#         X-Content-Type-Options "nosniff"
+#         -Server
+#     }
+#     # Do NOT rewrite or re-encode the body. The Stripe webhook verifies an
+#     # HMAC over the RAW bytes; any modification invalidates every signature.
+#     reverse_proxy 127.0.0.1:8100
+# }

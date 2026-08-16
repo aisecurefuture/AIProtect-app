@@ -38,7 +38,32 @@ month and keeps the promise the whole design rests on.
 
 ---
 
-## DNS
+## DNS — status 2026-08-16
+
+Records added. Verified against `ns23.domaincontrol.com`:
+
+| Host | State |
+|---|---|
+| `app` `api` `docs` `support` | ✅ single A → `178.156.228.46` |
+| `@` (apex) | ⚠️ **three A records** — the two GoDaddy parking IPs are still there |
+| `www` | ⚠️ **CNAME *and* A records** — invalid |
+
+**Both remaining problems break certificate issuance**, so they are not
+cosmetic:
+
+- The apex round-robins between the box and `15.197.142.173` /
+  `3.33.152.147`. Measured: five plain-HTTP requests to `aiprotect.app` all
+  landed on the **parking** IP. Let's Encrypt HTTP-01 validation follows the
+  same rotation, so issuance for the apex will fail intermittently until the
+  parking records are gone. Delete them, and turn **Domain Forwarding off** or
+  GoDaddy re-adds them.
+- A CNAME may not coexist with other records at the same name (RFC 1034).
+  Resolvers do unpredictable things with it. Make `www` either a single CNAME
+  to `aiprotect.app` **or** a single A record — not both.
+
+The four subdomains currently answer `308` on HTTP (that is the box's Caddy
+redirecting to HTTPS) and **fail TLS**, because no certificate exists for them
+yet. That is expected and is what Stage 1 below fixes.
 
 Lower the TTL first so a mistake is minutes rather than hours.
 
@@ -83,6 +108,31 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.ingress.yml u
 
 Brings up Caddy with `infra/Caddyfile`, which obtains certificates for all six
 hostnames and serves `infra/holding/` for the ones not built yet.
+
+### Staging on the CyberArmor host — do Stage 1 first
+
+Six hostnames now point at that box with no certificate, so every one of them
+throws a browser security warning today. `infra/caddy-snippets/stage1-holding-only.caddy`
+fixes that **without deploying anything**: static holding pages, no AIProtect
+container, no port contention, and no change to the CyberArmor site blocks. It
+also gets the certificates issued now, so Stage 2 is one `reverse_proxy` line
+rather than that plus an ACME wait.
+
+On the box, Caddy reads
+`/opt/cyberarmor/CyberArmorAi/infra/docker-compose/caddy-config/Caddyfile`
+(mounted read-only at `/etc/caddy`).
+
+```bash
+mkdir -p /opt/aiprotect/holding      # then copy this repo's infra/holding/* in
+# add to the caddy service's volumes:
+#   - /opt/aiprotect/holding:/srv/aiprotect-holding:ro
+# append the Stage 1 block to that Caddyfile, then:
+docker compose -f /opt/cyberarmor/CyberArmorAi/infra/docker-compose/docker-compose.yml \
+  exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
+`caddy reload` is graceful — it does not drop connections, so this does not
+interrupt CyberArmor. Verify from **outside** the box afterwards.
 
 ### B. Shared host — something else already owns the ports
 
