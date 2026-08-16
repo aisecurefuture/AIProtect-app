@@ -56,21 +56,29 @@ So the consumer API must send `x-client-id` = **device id**, identical from
 every surface on that machine, with the surface travelling separately as
 attribution only.
 
-## Proposed allowances
+## Allowances
 
-**These are pricing decisions and need confirmation.** The structure matters
-more than the numbers; the numbers are a starting point.
+**Decided 2026-08-16.** Numbers live in
+[`shared/tiers.json`](../shared/tiers.json); reasoning in
+[`PRICING.md`](PRICING.md). Do not restate them here — a second copy is a
+second thing to drift.
 
-| Tier | People | Devices | Notes |
-|---|---:|---:|---|
-| Free | 1 | 1 | Enough to feel the product on the device you care about most |
-| Pro | 1 | 5 | Phone, tablet, laptop, work laptop, spare |
-| Family | 6 | 25 | A shared pool, not 6 × a per-person cap |
+| Tier | People | Devices |
+|---|---:|---:|
+| Personal | 1 | 3 |
+| Pro | 1 | 10 |
+| Family | 6 | 30 |
+
+**No free tier** — a 14-day trial, then the subscription starts.
+**No per-device add-on** — outgrowing a tier means upgrading to the next one,
+which is why the caps are set generously.
 
 **Family uses a shared device pool on purpose.** Per-person caps mean a
-teenager with three devices is "over" while a parent with one is "under",
-and the owner has to administer quotas inside their own household. A pool
-fails in the direction of the product working.
+teenager with three devices is "over" while a parent with one is "under", and
+the owner ends up administering quotas inside their own household. A pool fails
+in the direction of the product working. The 6-person limit is the real
+constraint against sharing, and it matches Apple Family Sharing so the mental
+model is already installed.
 
 ## Rules
 
@@ -155,7 +163,9 @@ Both ceilings default to `0` (unlimited) and are set per deployment in
 
 ## Open questions
 
-1. **Tier numbers** — the table above is a proposal, not a decision.
+1. ~~Tier numbers~~ **Decided 2026-08-16** — see [`PRICING.md`](PRICING.md).
+   Trial state is now an entitlement state (`trialing` / `active` / `grace` /
+   `lapsed`), not a boolean flag, because rule 3 needs somewhere to live.
 2. ~~Does the browser extension count as a device?~~ **Decided 2026-08-16:
    one device, many surfaces.** See above.
 3. **Grace period length** for rule 3.

@@ -1,0 +1,123 @@
+{
+  "$comment": [
+    "SINGLE SOURCE OF TRUTH for subscription tiers.",
+    "",
+    "Prices appear in at least four places that must agree: the entitlement",
+    "checks in the API, the pricing page, the App Store / Play Console product",
+    "definitions, and the docs. Four copies of a number is four chances to",
+    "drift, and the one that drifts silently is the entitlement check -- a",
+    "customer charged for Family whose device cap still says Pro. So the number",
+    "lives here once and every surface reads it.",
+    "",
+    "Reasoning and the decisions behind these values: docs/PRICING.md",
+    "Validated by tests/test_pricing_is_coherent.py"
+  ],
+  "currency": "USD",
+  "version": "2026-08-16",
+
+  "trial": {
+    "days": 14,
+    "card_required": true,
+    "applies_to": ["personal", "pro", "family"],
+    "$comment": [
+      "14, not 7. This product proves itself when it BLOCKS something, which",
+      "is an event that may not happen in a light user's first week. A trial",
+      "that ends before the product has had a chance to demonstrate value",
+      "converts on faith rather than evidence.",
+      "",
+      "reminder_days_before_charge is not optional politeness. Auto-renewal",
+      "after a trial is regulated (FTC negative-option / click-to-cancel, EU",
+      "consumer law, and both app stores), and several jurisdictions require",
+      "advance notice. It is also the conversion moment: the reminder carries",
+      "the 'here is what we caught for you' summary, so the compliance step",
+      "and the sales step are the same message."
+    ],
+    "reminder_days_before_charge": 3
+  },
+
+  "tiers": {
+    "personal": {
+      "display_name": "Personal",
+      "devices": 3,
+      "people": 1,
+      "price_monthly": 4.99,
+      "price_annual": 39.99,
+      "$comment": [
+        "3 devices, not 1. Remember one-device-many-surfaces: a laptop running",
+        "the extension and the agent is ONE device, so a 1-device tier means",
+        "phone OR laptop, not both. With no free tier this is the acquisition",
+        "point, and it must not feel broken at the moment of first payment.",
+        "Phone + laptop + tablet is what a normal person owns."
+      ]
+    },
+    "pro": {
+      "display_name": "Pro",
+      "devices": 10,
+      "people": 1,
+      "price_monthly": 9.99,
+      "price_annual": 79.99,
+      "$comment": [
+        "10 devices, not 5. Devices cost well under a cent per month in",
+        "compute (measured: ~0.89s/scan on the consumer profile, plus the",
+        "content-hash cache), so generosity here is nearly free and it removes",
+        "the reason anyone would want a per-device add-on."
+      ]
+    },
+    "family": {
+      "display_name": "Family",
+      "devices": 30,
+      "people": 6,
+      "price_monthly": 14.99,
+      "price_annual": 119.99,
+      "$comment": [
+        "6 people to match Apple Family Sharing -- the mental model is already",
+        "installed in the customer's head, and fighting it buys nothing.",
+        "30 devices is effectively unlimited for a household, which is a",
+        "simplicity win: nobody has to administer quotas inside their own home.",
+        "The 6-person limit is the real constraint against sharing."
+      ]
+    }
+  },
+
+  "per_device_addon": null,
+  "$comment_addon": [
+    "DELIBERATELY NULL, and it should stay null.",
+    "",
+    "A $34 per-additional-device add-on was proposed and rejected 2026-08-16:",
+    "",
+    "  * The marginal rate exceeded the average rate. Pro at $79.99 for 10",
+    "    devices is $8/device/year; a $34 add-on is four times that. Marginal",
+    "    price should decline with volume, not multiply.",
+    "  * There is no cost basis. Compute per device is under a cent a month.",
+    "  * It is an SMB mental model. Consumers ask 'does this cover my stuff',",
+    "    not 'how many seats do I need'. Norton, Bitdefender and McAfee all",
+    "    sell device TIERS, not add-ons.",
+    "  * It charges friction at the worst possible moment. Someone adding a",
+    "    6th device is the most engaged user you have -- the one most likely",
+    "    to renew and refer. Teaching them that adoption costs extra is",
+    "    backwards.",
+    "",
+    "Someone who outgrows a tier upgrades to the next one. That is a bigger,",
+    "cleaner sale with no billing surprise."
+  ],
+
+  "upgrade_path": ["personal", "pro", "family"],
+
+  "store_fees": {
+    "$comment": [
+      "Modelled, not ignored. Apple and Google take 15% under $1M/yr (Small",
+      "Business Program) and 30% above it. On Family annual that is $18 or $36",
+      "off the top. Stripe on web is ~2.9% + 30c.",
+      "",
+      "Prices are deliberately IDENTICAL on every channel at launch. A",
+      "web-direct discount is real money but it adds a second price to",
+      "explain, per-jurisdiction anti-steering rules to track, and a support",
+      "burden -- for a saving that is not material until revenue is. Revisit",
+      "when the fee is a number worth optimising."
+    ],
+    "apple_google_small_business_pct": 15,
+    "apple_google_standard_pct": 30,
+    "web_processor_pct": 2.9,
+    "channel_price_parity": true
+  }
+}
