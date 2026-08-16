@@ -1,0 +1,69 @@
+# AIProtect ingress.
+#
+# ONLY FOR A BOX WHERE AIPROTECT OWNS 80/443.
+#
+# If you are deploying onto the CyberArmor.ai host, DO NOT bring this up: a
+# Caddy already holds those ports there and a second one simply fails to bind.
+# Use infra/caddy-snippets/aiprotect.caddy instead, which is the same routing
+# expressed as site blocks to paste into that host's existing Caddyfile.
+# See docs/DEPLOY.md.
+#
+# Verified 2026-08-16 against 178.156.228.46: that host's Caddy issues
+# PER-HOST certificates (cyberarmor.ai and app.cyberarmor.ai each have their
+# own single-name cert), and an `aiprotect.app` SNI returns no certificate at
+# all. So pointing DNS at it without adding the hostnames somewhere gets a TLS
+# error rather than a website.
+
+{
+	email admin@aiprotect.app
+}
+
+# Applied to every site below.
+(common) {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# This product's whole pitch is that it protects a browser. Its own
+		# pages should not be embeddable in somebody else's frame.
+		X-Frame-Options "DENY"
+		-Server
+	}
+}
+
+# --- the consumer portal ---------------------------------------------------
+app.aiprotect.app {
+	import common
+	reverse_proxy web:3000
+}
+
+# --- the API ---------------------------------------------------------------
+api.aiprotect.app {
+	import common
+
+	# The Stripe webhook is the one route an unauthenticated stranger can
+	# reach. It is signature-verified in the app (stdlib hmac over the RAW
+	# body), so nothing here may rewrite or re-encode the request -- a proxy
+	# that touched the body would invalidate every signature.
+	reverse_proxy api:8100 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+# --- not built yet ---------------------------------------------------------
+# Routed to an explicit holding page rather than left out.
+#
+# Omitting them would mean no certificate, so a visitor gets a browser
+# security warning on a security product's domain -- the worst possible first
+# impression. A 502 from a hostname with no backend is barely better. A page
+# that says "not ready yet" is at least true.
+aiprotect.app, www.aiprotect.app, docs.aiprotect.app, support.aiprotect.app {
+	import common
+	root * /srv/holding
+	file_server
+	# Anything not the holding page still resolves TO the holding page, so no
+	# path on these hosts can 404 into something confusing.
+	try_files {path} /index.html
+}

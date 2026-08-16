@@ -196,6 +196,27 @@ services:
     ports:
       - "127.0.0.1:8100:8100"
 
+  web:
+    env_file: ["${CYBERARMOR_ENV_FILE:-.env}"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    build:
+      context: ../
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked in at BUILD time. NEXT_PUBLIC_* is inlined into the client
+        # bundle, so setting it under `environment:` would do nothing -- the
+        # browser would keep calling whatever was baked. Changing it needs a
+        # rebuild, not a restart.
+        NEXT_PUBLIC_API_URL: "${AIPROTECT_PUBLIC_API_URL:-https://api.aiprotect.app}"
+    restart: unless-stopped
+    # Loopback only. Being publicly reachable is the proxy's job -- either the
+    # Caddy in docker-compose.ingress.yml or an existing one on a shared host.
+    # Binding 0.0.0.0 here would serve the portal directly and bypass every
+    # security header set at the edge.
+    ports:
+      - "127.0.0.1:3000:3000"
+
 volumes:
   hf_models:
   url_trust_gate_audit_spool:

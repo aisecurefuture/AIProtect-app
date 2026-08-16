@@ -1,0 +1,46 @@
+# AIProtect site blocks for a SHARED host.
+#
+# Use this when AIProtect runs on a box whose 80/443 already belong to another
+# Caddy -- e.g. the CyberArmor.ai host. Two Caddy instances cannot both bind
+# those ports; the second simply fails to start. Append these blocks to that
+# host's existing Caddyfile and reload it, rather than bringing up
+# infra/docker-compose.ingress.yml.
+#
+# Caddy on that host already issues per-host certificates, so each hostname
+# below gets its own on reload. Nothing about the existing CyberArmor site
+# blocks needs to change.
+#
+# NOTE THE UPSTREAM PORTS. The base compose binds every AIProtect service to
+# 127.0.0.1 only, so from the host's perspective they are loopback ports, not
+# container names. That is deliberate: nothing here should be publicly
+# reachable except through this proxy.
+
+app.aiprotect.app {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:3000
+}
+
+api.aiprotect.app {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	# Do not rewrite or re-encode the body: the Stripe webhook verifies a
+	# signature over the RAW bytes, and any modification invalidates it.
+	reverse_proxy 127.0.0.1:8100
+}
+
+aiprotect.app, www.aiprotect.app, docs.aiprotect.app, support.aiprotect.app {
+	encode zstd gzip
+	root * /opt/aiprotect/holding
+	file_server
+	try_files {path} /index.html
+}

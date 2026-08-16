@@ -1,0 +1,35 @@
+# Caddy, as an OPT-IN overlay.
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.ingress.yml up -d
+#
+# Kept out of the base compose because whether AIProtect should own 80/443 is a
+# per-host decision, not a property of the stack. On a dedicated box it should.
+# On the CyberArmor.ai host it must NOT -- a Caddy already holds those ports
+# there and a second one fails to bind; use infra/caddy-snippets/aiprotect.caddy
+# instead. See docs/DEPLOY.md.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    # Binding a port below 1024 is the only privilege it needs.
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"     # HTTP/3
+    volumes:
+      - ../infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../infra/holding:/srv/holding:ro
+      # Certificates live here. Losing this volume means re-issuing every
+      # certificate on the next start, which is a fast way to meet Let's
+      # Encrypt's rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api, web]
+
+volumes:
+  caddy_data:
+  caddy_config:
