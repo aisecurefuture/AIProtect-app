@@ -16,8 +16,14 @@ help:
 # Everything a change should have to survive.
 check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test
 
+# EVERY service, not just detection. The first version of this target ran
+# `services/detection/tests/` only, which is the same defect the product code
+# is held to: a green result from a check that never covered what it claimed.
+# The repo-root conftest.py is what makes a combined run safe -- without it the
+# first suite to `import main` wins the name for the whole process and every
+# later suite silently asserts against another service's module.
 test:
-	$(PY) -m pytest services/detection/tests/ -q
+	$(PY) -m pytest services/ -q
 
 # The two seams this product is built on. Standalone -- no services, no
 # network, no docker. If either stops holding, the architecture changed and

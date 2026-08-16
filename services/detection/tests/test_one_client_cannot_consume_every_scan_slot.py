@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from rate_limit import TokenBucketLimiter  # noqa: E402
+from rate_limit import SubscriptionLimiter, TokenBucketLimiter  # noqa: E402
 
 
 class DisabledByDefault(unittest.TestCase):
@@ -110,6 +110,102 @@ class TheLimiterIsSafeToOperate(unittest.TestCase):
         stats = lim.stats()
         self.assertEqual(stats["allowed"], 2)
         self.assertEqual(stats["rejected"], 4)
+
+
+class ASubscriptionIsAlsoBounded(unittest.TestCase):
+    """A per-device limit alone caps nothing that matters to the bill.
+
+    Subscriptions cover many devices -- that is the product. It is also a
+    multiplier on the most expensive operation this service has: ten devices at
+    60 rpm is 600 rpm from one paying account, and a Family plan makes that the
+    normal case rather than the abusive one.
+    """
+
+    def test_devices_cannot_sum_past_the_account_ceiling(self):
+        """THE POINT. Each device stays inside its own limit, and together
+        they still cannot exceed what the subscription is allowed."""
+        lim = SubscriptionLimiter(
+            device_rpm=600, device_burst=10, account_rpm=600, account_burst=12
+        )
+        allowed = 0
+        for i in range(10):                       # ten enrolled devices
+            for _ in range(5):                    # five requests each = 50
+                ok, _retry, _scope = lim.check(device=f"dev-{i}", account="acct-1")
+                allowed += ok
+        self.assertLessEqual(allowed, 12, "account burst was exceeded")
+
+    def test_a_rejection_says_which_ceiling_it_hit(self):
+        """'Wait a moment' and 'another of your devices is eating the plan'
+        are different messages, and the app cannot choose without this."""
+        lim = SubscriptionLimiter(
+            device_rpm=60, device_burst=1, account_rpm=6000, account_burst=100
+        )
+        lim.check(device="dev-a", account="acct-1")
+        ok, _retry, scope = lim.check(device="dev-a", account="acct-1")
+        self.assertFalse(ok)
+        self.assertEqual(scope, "device")
+
+        lim2 = SubscriptionLimiter(
+            device_rpm=6000, device_burst=100, account_rpm=60, account_burst=1
+        )
+        lim2.check(device="dev-a", account="acct-1")
+        ok, _retry, scope = lim2.check(device="dev-b", account="acct-1")
+        self.assertFalse(ok)
+        self.assertEqual(scope, "account")
+
+    def test_one_device_cannot_starve_its_siblings(self):
+        """Fairness within a household: a compromised or runaway laptop must
+        not silently remove protection from everyone else's phone."""
+        lim = SubscriptionLimiter(
+            device_rpm=60, device_burst=3, account_rpm=6000, account_burst=500
+        )
+        for _ in range(50):
+            lim.check(device="runaway-laptop", account="acct-1")
+        self.assertFalse(lim.check(device="runaway-laptop", account="acct-1")[0])
+        self.assertTrue(lim.check(device="someones-phone", account="acct-1")[0])
+
+    def test_two_accounts_do_not_share_a_ceiling(self):
+        lim = SubscriptionLimiter(
+            device_rpm=6000, device_burst=100, account_rpm=60, account_burst=2
+        )
+        for _ in range(10):
+            lim.check(device="dev-a", account="acct-1")
+        self.assertFalse(lim.check(device="dev-a", account="acct-1")[0])
+        self.assertTrue(lim.check(device="dev-z", account="acct-2")[0])
+
+    def test_an_account_rejection_does_not_charge_the_device(self):
+        """The account is peeked before the device bucket is spent. Otherwise a
+        device pays a token for a request the account was always going to
+        refuse, and a throttled household would also look like it had
+        misbehaving devices."""
+        lim = SubscriptionLimiter(
+            device_rpm=60, device_burst=5, account_rpm=60, account_burst=1
+        )
+        lim.check(device="dev-a", account="acct-1")      # spends the account token
+        for _ in range(3):
+            ok, _r, scope = lim.check(device="dev-a", account="acct-1")
+            self.assertFalse(ok)
+            self.assertEqual(scope, "account")
+        # The device never got charged for those, so once the account refills
+        # the device still has its own budget intact.
+        self.assertGreater(lim.stats()["device"]["allowed"], 0)
+        self.assertEqual(lim.stats()["device"]["rejected"], 0)
+
+    def test_no_account_header_still_limits_the_device(self):
+        """Callers that do not send an account (a device not yet enrolled)
+        must not thereby escape limiting altogether."""
+        lim = SubscriptionLimiter(
+            device_rpm=60, device_burst=2, account_rpm=60, account_burst=2
+        )
+        self.assertTrue(lim.check(device="dev-a")[0])
+        self.assertTrue(lim.check(device="dev-a")[0])
+        self.assertFalse(lim.check(device="dev-a")[0])
+
+    def test_both_ceilings_default_to_unlimited(self):
+        lim = SubscriptionLimiter(device_rpm=0, account_rpm=0)
+        self.assertFalse(lim.enabled)
+        for _ in range(500):
+            self.assertTrue(lim.check(device="d", account="a")[0])
 
 
 if __name__ == "__main__":

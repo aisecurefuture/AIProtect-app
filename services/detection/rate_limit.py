@@ -117,6 +117,20 @@ class TokenBucketLimiter:
                 self._buckets.popitem(last=False)
             return allowed, round(retry_after, 3)
 
+    def peek(self, identity: str) -> bool:
+        """Would `check()` succeed right now? Consumes nothing.
+
+        Needed by the two-level limiter: rejecting at the account level after
+        already spending a device token would charge a device for a request it
+        never got to make.
+        """
+        if not self.enabled:
+            return True
+        now = time.monotonic()
+        with self._lock:
+            tokens, last = self._buckets.get(identity, (self._capacity, now))
+            return min(self._capacity, tokens + (now - last) * self._refill_per_second) >= 1.0
+
     def stats(self) -> Dict[str, object]:
         with self._lock:
             return {
@@ -130,5 +144,100 @@ class TokenBucketLimiter:
             }
 
 
+#: Per-ACCOUNT ceiling. 0 disables it.
+#:
+#: WHY A SECOND LIMIT EXISTS
+#: A subscription covers many devices -- that is the product. It is also a
+#: multiplier on this service's most expensive operation: ten devices at 60 rpm
+#: is 600 rpm from one paying account, and a Family plan makes that the normal
+#: case rather than the abusive one. A per-device limit alone caps nothing that
+#: matters to the bill.
+#:
+#: Deliberately NOT device_rpm x max_devices. The point is that a subscription
+#: has a cost ceiling regardless of how many devices are enrolled under it;
+#: multiplying would re-introduce exactly the hole this closes.
+ACCOUNT_RATE_LIMIT_RPM = int(
+    os.getenv("CYBERARMOR_DETECTION_ACCOUNT_RATE_LIMIT_RPM", "0")
+)
+ACCOUNT_RATE_LIMIT_BURST = int(
+    os.getenv(
+        "CYBERARMOR_DETECTION_ACCOUNT_RATE_LIMIT_BURST",
+        str(max(1, ACCOUNT_RATE_LIMIT_RPM // 4)),
+    )
+)
+
+
+class SubscriptionLimiter:
+    """Two buckets per request: the device, then the account behind it.
+
+    They answer different questions and the product needs both:
+
+      * DEVICE bucket -- fairness. One misbehaving or compromised device must
+        not consume the whole household's capacity. Without it, a runaway
+        laptop silently degrades protection on everyone else's phone.
+      * ACCOUNT bucket -- cost. The subscription is what gets billed, and it
+        has a ceiling no number of enrolled devices may exceed.
+
+    A rejection reports WHICH ceiling it hit, because the two mean different
+    things to the person reading it. "This device is going too fast" is
+    transient and self-correcting. "Your plan's limit" is not -- it means
+    another device is misbehaving, or the plan is genuinely too small, and the
+    app should say something different in each case.
+    """
+
+    def __init__(
+        self,
+        *,
+        device_rpm: int = RATE_LIMIT_RPM,
+        device_burst: int = RATE_LIMIT_BURST,
+        account_rpm: int = ACCOUNT_RATE_LIMIT_RPM,
+        account_burst: int = ACCOUNT_RATE_LIMIT_BURST,
+        max_clients: int = RATE_LIMIT_MAX_CLIENTS,
+    ) -> None:
+        self._device = TokenBucketLimiter(
+            rpm=device_rpm, burst=device_burst, max_clients=max_clients
+        )
+        self._account = TokenBucketLimiter(
+            rpm=account_rpm, burst=account_burst, max_clients=max_clients
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return self._device.enabled or self._account.enabled
+
+    @staticmethod
+    def identity(api_key: Optional[str], client_id: Optional[str]) -> str:
+        return TokenBucketLimiter.identity(api_key, client_id)
+
+    def check(
+        self, *, device: str, account: Optional[str] = None
+    ) -> Tuple[bool, float, str]:
+        """Returns (allowed, retry_after_seconds, scope).
+
+        `scope` is "device", "account", or "" when allowed.
+        """
+        # Peek the account first so a device is never charged a token for a
+        # request the account was going to refuse anyway.
+        if account is not None and not self._account.peek(account):
+            _, retry = self._account.check(account)   # records the rejection
+            return False, retry, "account"
+
+        allowed, retry = self._device.check(device)
+        if not allowed:
+            return False, retry, "device"
+
+        if account is not None:
+            allowed, retry = self._account.check(account)
+            if not allowed:
+                # Lost a race between the peek and here. Rare, and the device
+                # token stays spent -- refunding it would need a combined lock
+                # across both buckets for a case that costs one request.
+                return False, retry, "account"
+        return True, 0.0, ""
+
+    def stats(self) -> Dict[str, object]:
+        return {"device": self._device.stats(), "account": self._account.stats()}
+
+
 #: Process-wide instance used by main.py.
-SCAN_LIMITER = TokenBucketLimiter()
+SCAN_LIMITER = SubscriptionLimiter()

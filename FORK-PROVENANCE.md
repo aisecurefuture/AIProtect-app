@@ -74,9 +74,29 @@ is built. Nothing on this list is a decision to go without.
 - [ ] **Batch `/scan/redact`'s NER windows** — up to 24 windows × 2 models on
   one text, currently one forward pass per window. Real win, needs
   `torch`/`transformers` installed to test, and it is the fail-closed path.
-- [ ] **Strip `tenant_lists.py` from url-trust-gate** and default `tenant_id`.
-  The gate already falls back to a standalone score-based verdict when the
-  policy service is unreachable, so consumer mode is mostly latent already.
+- [x] ~~**Strip `tenant_lists.py` from url-trust-gate** and default
+  `tenant_id`.~~ Done 2026-08-16. Also removed `test_tenant_lists.py`.
+- [ ] **Per-ACCOUNT allow/block lists.** Removing `tenant_lists.py` removed the
+  only allow/block path. It could never have fired here (no policy service to
+  query), so nothing was lost operationally — but "always allow this site" and
+  "never open this site" are good consumer features and they need to come back
+  scoped to the **account**, evaluated across its enrolled devices. Blocked on
+  the consumer API existing.
+- [x] ~~**`services/audit` was missed in the initial fork**~~ — added the same
+  day, along with three other things the first pass dropped. All four were the
+  same class of mistake: **copying a component without the things it is only
+  transitively coupled to.** Each one was found by a test refusing to collect,
+  not by review.
+  - `services/audit/` — the writer library was copied, the service it writes
+    to was not. The Activity feed depends on it.
+  - `conftest.py` — repo-root test bootstrap. Without it every service's
+    `main`/`models` collide in a combined run and one suite silently asserts
+    against another service's module. Adapted: source roots are now
+    `libs/cyberarmor-core` and `libs/policy-engine`, no `sdks/python`.
+  - `pytest.ini` — `--import-mode=importlib`, which is what makes duplicate
+    test basenames across suites legal.
+  - `scripts/security/rotate_audit_signing_key.py` — the audit key rotation
+    tests execute it as a subprocess.
 - [ ] **Make `libs/cyberarmor-core` an installable package** — it has no
   `pyproject.toml`, no `setup.py`, and no `__init__.py`. It works only because
   every Dockerfile does `COPY` + `PYTHONPATH`. Worth fixing here regardless of

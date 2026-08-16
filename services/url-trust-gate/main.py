@@ -58,7 +58,28 @@ from evidence import EvidenceRecord, EvidenceWriter
 from cyberarmor_core.audit_writer import AuditWriter
 from feeds import ReputationAggregator
 from metrics import MetricsRegistry
-from tenant_lists import TenantListClient
+import consumer_verdict
+
+#: Single-user product: there is no tenant. The constant still reaches the
+#: evidence record and the audit hash chain, where one value collapses that
+#: chain to a single chain -- correct for one account, not a workaround.
+DEFAULT_ACCOUNT_ID = "aiprotect"
+
+#: Attribution fallback when a caller sends no device. Matches the convention
+#: settled in the seam spikes: agent_id is the enrolled device, or a surface
+#: literal when no device originated the event.
+UNATTRIBUTED_DEVICE = "aiprotect-api"
+
+
+def resolve_device_id(req: "TrustGateRequest") -> str:
+    """Which enrolled device this evaluation belongs to.
+
+    A subscription covers many devices, so every verdict has to be
+    attributable to one of them or the Activity feed cannot say where
+    something happened. `device_id` is the consumer-facing spelling;
+    `agent_id` is the inherited one and is still honoured.
+    """
+    return req.device_id or req.agent_id or UNATTRIBUTED_DEVICE
 
 logger = logging.getLogger("url_trust_gate")
 logging.basicConfig(
@@ -124,7 +145,12 @@ def verify_api_key(api_key: Annotated[str | None, Header(alias="x-api-key")] = N
 class TrustGateRequest(BaseModel):
     """Incoming request to evaluate a URL before a consumer fetches it."""
 
-    tenant_id: str
+    # AIProtect has accounts and devices, not tenants. The field is kept and
+    # defaulted rather than deleted: it still flows into the evidence record
+    # and the audit service's hash chain, where a single constant collapses
+    # that chain to one chain -- which is the correct shape for a single-user
+    # product, not a workaround. Callers never send it.
+    tenant_id: str = DEFAULT_ACCOUNT_ID
     url: str
     # Where the request originated. Drives policy and evidence tagging.
     # Examples: "browser-extension", "endpoint-agent", "proxy", "rasp",
@@ -134,7 +160,14 @@ class TrustGateRequest(BaseModel):
     # policy engine; never logged in raw form unless tenant policy allows.
     user_id: Optional[str] = None
     app_id: Optional[str] = None
+    # Legacy spelling of device_id. Kept so forked callers keep working.
     agent_id: Optional[str] = None
+    # THE DEVICE THAT ASKED. A subscription covers many devices, so "which of
+    # my devices hit this link" is a question the Activity feed has to be able
+    # to answer -- "Blocked on your iPhone" is only possible if the identity
+    # rides along with the evaluation. Resolved via `resolve_device_id()`,
+    # which prefers this over the legacy `agent_id`.
+    device_id: Optional[str] = None
     # Hint to the gate about how much work to do. "fast" = cache + reputation
     # only; "standard" = + safe crawl; "deep" = + detonation sandbox.
     depth: str = Field(default="standard", pattern="^(fast|standard|deep)$")
@@ -177,6 +210,13 @@ class TrustGateDecision(BaseModel):
 class TrustGateResponse(BaseModel):
     request_id: str
     tenant_id: str
+    #: Which device this verdict was produced for. Echoed so a client holding
+    #: several enrolled devices can attribute the result without correlating.
+    device_id: Optional[str] = None
+    #: Plain-language rendering for a person: verdict / reason /
+    #: checks_performed. See consumer_verdict.py -- `safe` is a bounded claim
+    #: ("nothing we checked came back bad"), never an assertion about the page.
+    consumer: Dict[str, Any] = Field(default_factory=dict)
     canonical_url: str
     redirect_chain: List[str] = Field(default_factory=list)
     cache_hit: bool = False
@@ -260,9 +300,6 @@ _evidence = EvidenceWriter(audit_url=AUDIT_SERVICE_URL, audit_secret=AUDIT_API_S
 #: path produced, which nobody was reading and which lost every record.
 _audit = AuditWriter(service_url=AUDIT_SERVICE_URL, api_secret=AUDIT_API_SECRET)
 _feeds = ReputationAggregator.from_env()
-_tenant_lists = TenantListClient(
-    policy_url=POLICY_SERVICE_URL, policy_secret=POLICY_API_SECRET
-)
 _metrics = MetricsRegistry()
 
 #: Held so the task is not garbage-collected mid-flight; asyncio keeps only a
@@ -511,27 +548,18 @@ async def evaluate(req: TrustGateRequest) -> TrustGateResponse:
         # sites again.
         _schedule_background_crawl(req, canonical)
 
-    # ---------------- 3. Tenant allow / block lists -------------------------
-    # Fetched from the policy service via TenantListClient (GET /policies
-    # ?tenant_id=…&scope=url-trust-gate). An exact match short-circuits to
-    # allow/block without crawling — also protects known-corporate domains
-    # from detonation.
-    tenant_listed = await _tenant_listed_decision(req.tenant_id, canonical)
-    if tenant_listed is not None:
-        return _build_response(
-            request_id=request_id,
-            req=req,
-            canonical_url=redacted_url,
-            redirect_chain=[],
-            cache_hit=False,
-            crawled=False,
-            detonated=False,
-            scores=TrustGateScores(),
-            iocs=[],
-            decision=tenant_listed,
-            evidence_id=None,
-            start=start,
-        )
+    # ---------------- 3. (removed) tenant allow / block lists ---------------
+    # The B2B gate short-circuited here on a per-tenant allow/block list
+    # fetched from the policy service. Removed with the fork: there is no
+    # policy service in this product and no tenant to scope a list to, so the
+    # lookup could only ever have returned None.
+    #
+    # NOT a decision to go without per-account lists. "Always allow this site"
+    # and "never open this site" are good consumer features and they belong
+    # here -- but they belong on the ACCOUNT, evaluated against the enrolled
+    # device set, and the API that owns accounts does not exist yet. Building
+    # them against a tenant-shaped lookup first would be building the wrong
+    # thing. Tracked in FORK-PROVENANCE.md.
 
     # ---------------- 4. Safe crawl -----------------------------------------
     crawl_result: Optional[CrawlResult] = None
@@ -782,6 +810,15 @@ def _build_response(
     return TrustGateResponse(
         request_id=request_id,
         tenant_id=req.tenant_id,
+        device_id=resolve_device_id(req),
+        consumer=consumer_verdict.summarise(
+            action=decision.action,
+            scores=scores,
+            depth=req.depth,
+            cache_hit=cache_hit,
+            crawled=crawled,
+            detonated=detonated,
+        ),
         canonical_url=canonical_url,
         redirect_chain=redirect_chain,
         cache_hit=cache_hit,
@@ -795,26 +832,7 @@ def _build_response(
     )
 
 
-async def _tenant_listed_decision(
-    tenant_id: str, canonical
-) -> Optional[TrustGateDecision]:
-    """Check tenant-scoped allow/block lists in the policy service.
 
-    Returning None means "not listed; continue with full pipeline".
-    """
-
-    listed = await _tenant_lists.lookup(tenant_id, canonical.host, canonical.url)
-    if listed is None:
-        return None
-    if listed == "allow":
-        return TrustGateDecision(
-            action="allow", reason="tenant allow-list match", matched_policy="tenant-allow-list"
-        )
-    if listed == "block":
-        return TrustGateDecision(
-            action="block", reason="tenant block-list match", matched_policy="tenant-block-list"
-        )
-    return None
 
 
 def _schedule_background_crawl(req: TrustGateRequest, canonical: "CanonicalUrl") -> None:

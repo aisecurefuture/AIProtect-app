@@ -169,7 +169,7 @@ class TheGateUsesTheSharedWriter(unittest.TestCase):
     def test_the_gate_has_its_own_spool_directory(self):
         """Two writers sharing a spool would drain each other's files: each
         unlinks a file once IT has delivered the contents."""
-        compose = (_REPO / "infra" / "docker-compose" / "docker-compose.yml").read_text(
+        compose = (_REPO / "infra" / "docker-compose.yml").read_text(
             encoding="utf-8")
         self.assertIn(
             "url_trust_gate_audit_spool", compose,

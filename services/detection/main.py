@@ -1908,32 +1908,56 @@ def _sheds_when_saturated(fn):
     return wrapper
 
 
+#: What a caller is told, per ceiling. The two are different situations and a
+#: consumer app should not render them with the same sentence: a device limit
+#: is transient and self-correcting, an account limit means either another
+#: device is misbehaving or the plan is too small.
+_LIMIT_DETAIL = {
+    "device": (
+        "this device's scan rate was exceeded; nothing was scanned. "
+        "Apply your fail mode."
+    ),
+    "account": (
+        "this subscription's total scan rate was exceeded across all its "
+        "devices; nothing was scanned. Another device may be consuming the "
+        "plan's capacity."
+    ),
+}
+
+
 def _rate_limited(
     x_api_key: Optional[str] = Header(default=None, alias="x-api-key"),
     x_client_id: Optional[str] = Header(default=None, alias="x-client-id"),
+    x_account_id: Optional[str] = Header(default=None, alias="x-account-id"),
 ) -> None:
-    """Per-client token bucket, attached as a route dependency.
+    """Two-level token bucket (device, then account), as a route dependency.
 
     A dependency rather than a decorator so endpoint signatures are untouched:
     FastAPI builds the request model from the signature, and wrapping these
     handlers to read headers would mean restating every parameter.
 
-    Disabled unless CYBERARMOR_DETECTION_RATE_LIMIT_RPM > 0, so the B2B
-    deployment is unaffected until it opts in.
+    `x-client-id` identifies the DEVICE, `x-account-id` the SUBSCRIPTION behind
+    it. A subscription covers many devices, so a per-device limit alone caps
+    nothing that matters to the bill -- see SubscriptionLimiter.
+
+    Both ceilings default to 0 (unlimited), so a deployment is unaffected until
+    it opts in.
     """
-    allowed, retry_after = SCAN_LIMITER.check(
-        SCAN_LIMITER.identity(x_api_key, x_client_id)
+    device = SCAN_LIMITER.identity(x_api_key, x_client_id)
+    account = (
+        SCAN_LIMITER.identity(x_api_key, x_account_id) if x_account_id else None
     )
+    allowed, retry_after, scope = SCAN_LIMITER.check(device=device, account=account)
     if allowed:
         return
     raise HTTPException(
         status_code=429,
         detail={
             "reason": "rate_limited",
-            "detail": (
-                "per-client scan rate exceeded; nothing was scanned. "
-                "Apply your fail mode."
-            ),
+            # WHICH ceiling. Without it the app cannot tell the person whether
+            # to wait a moment or to go look at their other devices.
+            "scope": scope,
+            "detail": _LIMIT_DETAIL.get(scope, "scan rate exceeded"),
             "retry_after_seconds": retry_after,
         },
         headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},

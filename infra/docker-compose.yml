@@ -11,6 +11,7 @@
 
 services:
   detection:
+    env_file: ["${CYBERARMOR_ENV_FILE:-.env}"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     # run_detection_service.sh chowns the /models volume (the HuggingFace cache
@@ -55,8 +56,17 @@ services:
       # per-device x-client-id; without it every consumer request would share
       # one API key and therefore one bucket. 0 (unlimited) is the default
       # everywhere else, so the B2B pilot is untouched.
+      # Per DEVICE -- fairness. One runaway device must not consume the whole
+      # household's capacity.
       CYBERARMOR_DETECTION_RATE_LIMIT_RPM: "60"
       CYBERARMOR_DETECTION_RATE_LIMIT_BURST: "15"
+      # Per ACCOUNT -- cost. A subscription covers many devices, so the device
+      # limit alone caps nothing that matters to the bill: 10 devices x 60 rpm
+      # is 600 rpm from one paying account, and Family makes that normal rather
+      # than abusive. Deliberately NOT device_rpm x max_devices -- multiplying
+      # would re-open the hole. See docs/MULTI-DEVICE.md.
+      CYBERARMOR_DETECTION_ACCOUNT_RATE_LIMIT_RPM: "300"
+      CYBERARMOR_DETECTION_ACCOUNT_RATE_LIMIT_BURST: "60"
 
       # ---- Things a consumer tier must not run ------------------------
       # Ollama is a second container holding a 3B model, consulted only for
@@ -95,5 +105,65 @@ services:
       retries: 3
       start_period: 180s
 
+  url-trust-gate:
+    env_file: ["${CYBERARMOR_ENV_FILE:-.env}"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    build:
+      context: ../
+      dockerfile: services/url-trust-gate/Dockerfile
+    restart: unless-stopped
+    environment:
+      TRUST_GATE_API_SECRET: "${AIPROTECT_TRUST_GATE_API_SECRET:?set in aiprotect env}"
+      DETECTION_URL: "http://detection:8002"
+      DETECTION_API_SECRET: "${AIPROTECT_DETECTION_API_SECRET:?set in aiprotect env}"
+      AUDIT_SERVICE_URL: "http://audit:8003"
+      AUDIT_API_SECRET: "${AIPROTECT_AUDIT_API_SECRET:?set in aiprotect env}"
+      # Its OWN spool. Two AuditWriters sharing one would drain each other's
+      # files -- each unlinks a spool file once IT has delivered the contents,
+      # so the other's pending events vanish undelivered.
+      AUDIT_SPOOL_DIR: "/spool"
+      # No policy service in this product: consumer presets are evaluated
+      # in-process by the API. The gate already degrades to its own
+      # score-based verdicts when policy is unreachable, which is the mode it
+      # runs in here permanently.
+      POLICY_SERVICE_URL: ""
+    volumes:
+      - url_trust_gate_audit_spool:/spool
+    depends_on: [detection, audit]
+    ports:
+      - "127.0.0.1:8103:8005"
+
+  audit:
+    # THE SIGNING KEY REACHES EXACTLY ONE SERVICE.
+    # HMAC is symmetric, so any service holding the key can forge a record
+    # that verifies. It therefore lives in a file only this service reads --
+    # not in the env file every service shares. required:false so a dev
+    # machine and CI, where the file does not exist, still start; the real
+    # backstop is CYBERARMOR_ENFORCE_SECURE_SECRETS in services/audit/main.py.
+    env_file:
+      - "${CYBERARMOR_ENV_FILE:-.env}"
+      - path: "${CYBERARMOR_AUDIT_ENV_FILE:-/etc/cyberarmor/audit.env}"
+        required: false
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    build:
+      context: ../
+      dockerfile: services/audit/Dockerfile
+    restart: unless-stopped
+    environment:
+      AUDIT_API_SECRET: "${AIPROTECT_AUDIT_API_SECRET:?set in aiprotect env}"
+      # Single-user product: tenant_id is never sent, the service defaults it,
+      # and the hash chain collapses to one chain. That is correct here --
+      # UniqueConstraint("tenant_id","prev_event_id") degenerates rather than
+      # breaking. See FORK-PROVENANCE.md.
+      DATABASE_URL: "${AIPROTECT_AUDIT_DATABASE_URL:-sqlite:////data/audit.db}"
+    volumes:
+      - audit_data:/data
+    ports:
+      - "127.0.0.1:8104:8003"
+
 volumes:
   hf_models:
+  url_trust_gate_audit_spool:
+  audit_data:
