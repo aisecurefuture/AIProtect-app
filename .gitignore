@@ -32,3 +32,8 @@ local.properties
 .DS_Store
 .idea/
 .vscode/
+
+# Next.js
+apps/web/.next/
+apps/web/next-env.d.ts
+apps/web/tsconfig.tsbuildinfo

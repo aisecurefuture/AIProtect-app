@@ -1,7 +1,7 @@
 PY ?= python3
 
-.PHONY: help test verify-seams verify-consumer-scope verify-consumer-scope-selftest \
-        verify-artifact-imports projection up down check
+.PHONY: help test test-web verify-seams verify-consumer-scope \
+        verify-consumer-scope-selftest projection up down check
 
 help:
 	@echo "AIProtect"
@@ -14,7 +14,7 @@ help:
 	@echo "  make up / make down         run the detection stack"
 
 # Everything a change should have to survive.
-check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test
+check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test test-web
 
 # EVERY service, not just detection. The first version of this target ran
 # `services/detection/tests/` only, which is the same defect the product code
@@ -28,6 +28,13 @@ test:
 # The two seams this product is built on. Standalone -- no services, no
 # network, no docker. If either stops holding, the architecture changed and
 # somebody should know before the next feature lands on top of it.
+# The portal's job is to render what the services said WITHOUT flattening it.
+# Every "checked and fine" vs "did not check" distinction the backend protects
+# dies at one careless ternary in a component, and the backend cannot defend
+# itself from the frontend -- so the mapping is tested.
+test-web:
+	cd apps/web && node --test --experimental-strip-types lib/*.test.ts
+
 verify-seams:
 	$(PY) spikes/spike_policy_engine.py
 	$(PY) spikes/spike_core_tenant_free.py
