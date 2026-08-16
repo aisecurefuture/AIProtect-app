@@ -183,6 +183,11 @@ services:
       # Never true outside local development: it returns the emailed sign-in
       # code in the HTTP response, which makes the code pointless.
       AIPROTECT_RETURN_LOGIN_CODE: "false"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      # Without this the webhook refuses EVERY event rather than accepting
+      # unsigned ones -- a misconfiguration must not become an open endpoint
+      # anyone can use to cancel subscriptions.
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
     volumes:
       - api_data:/data
     depends_on: [detection, url-trust-gate]

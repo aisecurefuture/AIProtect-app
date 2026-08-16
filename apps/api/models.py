@@ -110,6 +110,18 @@ class Subscription(Base):
     billing_source = Column(String, nullable=True)
     billing_reference = Column(String, nullable=True)
 
+    #: Stripe identifiers. Indexed because a webhook arrives knowing only
+    #: these -- there is no account id in the payload, so this is how an event
+    #: finds the subscription it is about.
+    stripe_customer_id = Column(String, nullable=True, unique=True, index=True)
+    stripe_subscription_id = Column(String, nullable=True, unique=True, index=True)
+
+    #: `created` of the most recent Stripe event applied to this row. An event
+    #: older than this is a late delivery and is ignored: Stripe guarantees
+    #: delivery, not order, and letting a stale `past_due` land after a
+    #: recovered `active` would put a paying customer into grace.
+    last_billing_event_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
@@ -273,6 +285,30 @@ class LoginCode(Base):
     consumed_at = Column(DateTime(timezone=True), nullable=True)
     #: Bounded so a captured code cannot be brute-forced within its lifetime.
     attempts = Column(Integer, nullable=False, default=0)
+
+
+class ProcessedWebhookEvent(Base):
+    """Every Stripe event id we have already applied.
+
+    Stripe delivers AT LEAST ONCE and retries for up to three days on any
+    non-2xx. Without this table a retried `customer.subscription.deleted`
+    re-lapses a subscription the customer has since fixed, and a retried
+    checkout completion could extend a trial twice. The primary key IS the
+    idempotency mechanism: the insert fails on a duplicate, so a re-delivery
+    cannot reach the handler at all.
+    """
+
+    __tablename__ = "processed_webhook_events"
+
+    #: Stripe's `evt_...` id.
+    id = Column(String, primary_key=True)
+    event_type = Column(String, nullable=False)
+    #: Stripe's own `created`, not ours. Used to reject events that arrive
+    #: out of order -- Stripe makes no ordering guarantee, and a late
+    #: `past_due` overwriting a current `active` would put a paying customer
+    #: into grace.
+    event_created = Column(DateTime(timezone=True), nullable=False)
+    received_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 class Session(Base):

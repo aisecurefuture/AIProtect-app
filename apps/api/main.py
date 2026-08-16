@@ -15,12 +15,13 @@ import os
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DbSession
 
 import auth
+import billing
 import devices as dv
 import entitlements
 import presets
@@ -395,6 +396,98 @@ def remove_device(
     revoked = dv.revoke_device(db, device=device)
     db.commit()
     return {"removed": True, "surfaces_revoked": revoked}
+
+
+# ---------------------------------------------------------------------------
+# Billing
+# ---------------------------------------------------------------------------
+
+
+class CheckoutIn(BaseModel):
+    tier: str
+    price_id: str
+
+
+@app.post("/billing/checkout")
+def checkout(
+    payload: CheckoutIn,
+    db: DbSession = Depends(get_db),
+    account: Account = Depends(current_account),
+) -> Dict[str, Any]:
+    sub = subscription_of(db, account)
+    if payload.tier not in entitlements.tier_names():
+        raise HTTPException(status_code=400, detail={"reason": "unknown_tier"})
+    try:
+        out = billing.create_checkout_session(
+            account_email=account.email, tier=payload.tier,
+            price_id=payload.price_id, subscription_id=sub.id,
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
+        raise HTTPException(
+            status_code=503, detail={"reason": "billing_unavailable"}
+        ) from exc
+    return out
+
+
+@app.post("/billing/portal")
+def portal(
+    db: DbSession = Depends(get_db), account: Account = Depends(current_account)
+) -> Dict[str, Any]:
+    """Stripe's hosted portal: payment method, invoices, and cancellation.
+
+    Not a bespoke cancel flow. Click-to-cancel rules require cancelling be as
+    easy as subscribing, and Stripe's portal is already built to that standard.
+    """
+    sub = subscription_of(db, account)
+    if not sub.stripe_customer_id:
+        raise HTTPException(status_code=409, detail={"reason": "no_billing_account"})
+    try:
+        return billing.create_portal_session(stripe_customer_id=sub.stripe_customer_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail={"reason": "billing_unavailable"}
+        ) from exc
+
+
+@app.post("/billing/webhook")
+async def stripe_webhook(
+    request: Request,
+    db: DbSession = Depends(get_db),
+    stripe_signature: Optional[str] = Header(default=None, alias="stripe-signature"),
+) -> Dict[str, Any]:
+    """Receive Stripe events.
+
+    The ONLY unauthenticated endpoint on this API, which is why the first thing
+    it does is verify a signature over the RAW body -- parsing and
+    re-serialising first would check a signature against bytes Stripe never
+    signed.
+
+    Failure modes are chosen deliberately:
+      * bad signature      -> 400. Never processed, never acknowledged.
+      * unknown event type -> 200. Stripe sends many events; 2xx keeps the ones
+                              we do not use out of the three-day retry queue.
+      * no matching row    -> 200. Retrying cannot conjure a subscription, and
+                              a permanently-failing endpoint gets disabled by
+                              Stripe, taking the events we DO need with it.
+      * unexpected error   -> 500, so Stripe retries. Idempotency makes that
+                              safe.
+    """
+    raw = await request.body()
+    try:
+        billing.verify_signature(
+            payload=raw,
+            signature_header=stripe_signature or "",
+            secret=billing.STRIPE_WEBHOOK_SECRET,
+        )
+        event = billing.parse_event(raw)
+    except billing.WebhookError as exc:
+        raise HTTPException(
+            status_code=400, detail={"reason": "invalid_webhook", "detail": str(exc)}
+        ) from exc
+
+    outcome = billing.handle_event(db, event)
+    db.commit()
+    return outcome.to_dict()
 
 
 # ---------------------------------------------------------------------------

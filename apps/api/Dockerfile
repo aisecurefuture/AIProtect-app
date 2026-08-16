@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
-    fastapi "uvicorn[standard]" pydantic sqlalchemy httpx cryptography
+    fastapi "uvicorn[standard]" pydantic sqlalchemy httpx cryptography stripe
 
 # The shared kernel. Not pip-installable (no pyproject/__init__ -- see
 # FORK-PROVENANCE.md), so it ships by COPY + PYTHONPATH like every other
