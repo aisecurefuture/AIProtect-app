@@ -171,11 +171,16 @@ match for confirmation (rule 2), never to decide one.
 
 ## Still to build
 
-- Family invites and the Kids preset assignment UI.
-- QR / deep-link wrapper around the enrollment and join codes.
-- Billing: the entitlement state machine is built, but nothing yet moves a
-  subscription between states. That is the billing phase.
-- Activity feed reading from the audit service.
+- Family invites and the Kids preset assignment UI. (Models exist, no routes.)
+- QR / deep-link wrapper around the enrollment and join codes. Today they are
+  six characters typed by hand, which works but is not the 60-second onboarding
+  the plan calls for.
+- Onboarding / plan-picker flow in the portal.
+
+~~Billing~~ built 2026-08-16: Stripe checkout, portal and a webhook move the
+subscription between `trialing`/`active`/`grace`/`lapsed`. See PRICING.md.
+
+~~Activity feed~~ built 2026-08-16: `apps/api/activity.py`, surfaced on Home.
 
 ## Open questions
 
