@@ -39,6 +39,16 @@ backwards:
 This API is what supplies `x-account-id` and `x-client-id` (the device) on every
 call it makes to detection, which is how the two-level rate limit works.
 
+**`x-client-id` is the DEVICE, never the surface.** A laptop running both the
+browser extension and the desktop agent is one device with two surfaces: one
+subscription slot, one rate-limit bucket, two revocable credentials. Sending a
+per-surface id would quietly hand that laptop 3× the device ceiling, and there
+is no second ceiling underneath to catch it.
+
+The open design question this leaves — how two surfaces on one machine
+independently arrive at the *same* `device_id` — is question 4 in
+`docs/MULTI-DEVICE.md` and needs deciding here.
+
 ## Hard rules
 - **No `tenant_id`.** Anywhere. Ever. Enforced by `make verify-consumer-scope`.
 - `agent_id` = enrolled device id, else `aiprotect-web` / `aiprotect-api`.

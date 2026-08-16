@@ -22,6 +22,40 @@ Account  (a person, or a family owner)
 *this iPhone*, *that laptop*. It is what the Activity feed attributes to
 ("Blocked on your iPhone"), so it has to match what the person would say.
 
+### One device, many surfaces — decided 2026-08-16
+
+```
+Device  (this laptop)
+  ├── surface: browser-extension
+  ├── surface: desktop-agent
+  └── surface: (mobile app, on a phone-shaped device)
+```
+
+A laptop running both the browser extension and the desktop agent is **one
+device**. Counting surfaces as devices would burn three subscription slots for
+one computer, and no one thinks of their laptop as three things.
+
+Consequences, all of which have to hold together:
+
+- **One slot.** Surfaces do not consume additional device allowance.
+- **Separate credentials.** They are separately installed and separately
+  revocable — uninstalling the extension must not revoke the agent.
+- **Removing the device revokes every surface on it.** A lost laptop is lost
+  entirely; revoking it one surface at a time is a way to miss one.
+- **Attribution needs both halves.** "Blocked in Chrome on your MacBook" is
+  device + surface. Neither alone is a sentence anyone can act on. The trust
+  gate carries both: `device_id` and `surface` on every verdict.
+- **Rate limiting keys on the DEVICE, never the surface.** This is the part
+  that is easy to get wrong: keying per surface would quietly give a
+  three-surface laptop 3 × the device ceiling, and unlike the account case
+  there is no second ceiling underneath to catch it. Pinned by
+  `OneDeviceManySurfaces` in
+  `services/detection/tests/test_one_client_cannot_consume_every_scan_slot.py`.
+
+So the consumer API must send `x-client-id` = **device id**, identical from
+every surface on that machine, with the surface travelling separately as
+attribution only.
+
 ## Proposed allowances
 
 **These are pricing decisions and need confirmation.** The structure matters
@@ -122,9 +156,18 @@ Both ceilings default to `0` (unlimited) and are set per deployment in
 ## Open questions
 
 1. **Tier numbers** — the table above is a proposal, not a decision.
-2. **Does the browser extension count as a device, or as part of the machine
-   it runs on?** Counting it separately burns a slot for what a person
-   experiences as one computer; not counting it means a laptop with the
-   extension and the desktop agent is one device with two credentials.
-   Leaning toward: **one device, many surfaces.**
+2. ~~Does the browser extension count as a device?~~ **Decided 2026-08-16:
+   one device, many surfaces.** See above.
 3. **Grace period length** for rule 3.
+4. **How does a surface learn its device id?** Follows from the decision above
+   and is now the load-bearing unknown: the extension and the agent on one
+   laptop have to arrive at the *same* `device_id` independently, or the
+   shared-slot and shared-bucket guarantees both quietly fail. Two candidate
+   shapes, to settle in Prompt 3:
+   - **Enroll the device once, then join surfaces to it** — a surface installed
+     second presents a code, or is claimed from the portal. Explicit, and it
+     cannot mis-merge two machines.
+   - **Derive a stable machine fingerprint** and let surfaces converge on it.
+     No user step, but a wrong match silently merges two real devices, and
+     rule 2 (a wiped device must not burn a slot) already needs a
+     fingerprint-like signal — so these may be the same mechanism.

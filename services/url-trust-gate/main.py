@@ -213,6 +213,12 @@ class TrustGateResponse(BaseModel):
     #: Which device this verdict was produced for. Echoed so a client holding
     #: several enrolled devices can attribute the result without correlating.
     device_id: Optional[str] = None
+    #: WHICH SURFACE ON THAT DEVICE asked -- browser extension, desktop agent,
+    #: mobile app. One device runs several; they share a subscription slot but
+    #: are separately installed and separately revocable, so attribution needs
+    #: both halves. "Blocked in Chrome on your MacBook" is device + surface;
+    #: neither alone is a sentence anybody can act on.
+    surface: Optional[str] = None
     #: Plain-language rendering for a person: verdict / reason /
     #: checks_performed. See consumer_verdict.py -- `safe` is a bounded claim
     #: ("nothing we checked came back bad"), never an assertion about the page.
@@ -811,6 +817,7 @@ def _build_response(
         request_id=request_id,
         tenant_id=req.tenant_id,
         device_id=resolve_device_id(req),
+        surface=req.source,
         consumer=consumer_verdict.summarise(
             action=decision.action,
             scores=scores,

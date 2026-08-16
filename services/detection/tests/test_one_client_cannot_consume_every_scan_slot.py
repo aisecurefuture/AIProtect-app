@@ -208,5 +208,65 @@ class ASubscriptionIsAlsoBounded(unittest.TestCase):
             self.assertTrue(lim.check(device="d", account="a")[0])
 
 
+class OneDeviceManySurfaces(unittest.TestCase):
+    """A laptop running the extension AND the desktop agent is ONE device.
+
+    Decided 2026-08-16 (docs/MULTI-DEVICE.md): a device is the thing a person
+    points at -- *this laptop* -- and the browser extension, desktop agent and
+    mobile app are SURFACES on it. Counting surfaces as devices would burn
+    three subscription slots for one computer.
+
+    That decision opens the same hole as multi-device, one level down. If the
+    device bucket were keyed per surface, a laptop with three surfaces would
+    quietly get 3 x 60 rpm -- and unlike the account case there is no second
+    ceiling underneath to catch it. So the key is the DEVICE, and the surface
+    rides along for attribution only.
+    """
+
+    def test_surfaces_on_one_device_share_its_bucket(self):
+        """THE PROPERTY. The extension and the agent draw from one budget."""
+        lim = SubscriptionLimiter(
+            device_rpm=60, device_burst=4, account_rpm=6000, account_burst=500
+        )
+        allowed = 0
+        for _ in range(10):
+            for _surface in ("browser-extension", "endpoint-agent", "mobile-app"):
+                # Same device id from every surface -- that is the contract the
+                # consumer API must honour when it sets x-client-id.
+                allowed += lim.check(device="laptop-1", account="acct-1")[0]
+        self.assertLessEqual(
+            allowed, 4,
+            "surfaces multiplied the device ceiling instead of sharing it",
+        )
+
+    def test_a_surface_is_not_an_identity(self):
+        """Keying on the surface would defeat the whole thing -- proven here so
+        a future change to the identity derivation cannot do it silently."""
+        per_surface = TokenBucketLimiter(rpm=60, burst=2)
+        for surface in ("browser-extension", "endpoint-agent", "mobile-app"):
+            # Three separate keys => three separate budgets. This is the SHAPE
+            # the consumer API must NOT send.
+            self.assertTrue(per_surface.check(f"laptop-1:{surface}")[0])
+            self.assertTrue(per_surface.check(f"laptop-1:{surface}")[0])
+        self.assertEqual(per_surface.stats()["allowed"], 6)  # 3x the ceiling
+
+        per_device = TokenBucketLimiter(rpm=60, burst=2)
+        for _surface in ("browser-extension", "endpoint-agent", "mobile-app"):
+            per_device.check("laptop-1")
+            per_device.check("laptop-1")
+        self.assertEqual(per_device.stats()["allowed"], 2)   # the ceiling holds
+
+    def test_two_devices_still_get_their_own_budgets(self):
+        """Sharing across surfaces must not collapse into sharing across
+        devices -- the phone should not be throttled by the laptop."""
+        lim = SubscriptionLimiter(
+            device_rpm=60, device_burst=2, account_rpm=6000, account_burst=500
+        )
+        for _ in range(10):
+            lim.check(device="laptop-1", account="acct-1")
+        self.assertFalse(lim.check(device="laptop-1", account="acct-1")[0])
+        self.assertTrue(lim.check(device="phone-1", account="acct-1")[0])
+
+
 if __name__ == "__main__":
     unittest.main()
