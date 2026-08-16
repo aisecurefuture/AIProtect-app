@@ -38,48 +38,29 @@ month and keeps the promise the whole design rests on.
 
 ---
 
-## DNS — status 2026-08-16
+## DNS — DONE, verified 2026-08-16
 
-Records added. Verified against `ns23.domaincontrol.com`:
+All six hostnames resolve to `178.156.228.46`, confirmed at the authoritative
+nameserver and propagated to 1.1.1.1, 8.8.8.8 and 9.9.9.9.
 
-| Host | State |
+| Host | Record |
 |---|---|
-| `app` `api` `docs` `support` | ✅ single A → `178.156.228.46` |
-| `@` (apex) | ⚠️ **three A records** — the two GoDaddy parking IPs are still there |
-| `www` | ⚠️ **CNAME *and* A records** — invalid |
+| `aiprotect.app` | A → `178.156.228.46` |
+| `www` | CNAME → `aiprotect.app` |
+| `app` `api` `docs` `support` | A → `178.156.228.46` |
 
-**Both remaining problems break certificate issuance**, so they are not
-cosmetic:
+Apex TTL is 600s, so a change is reversible in ten minutes.
 
-- The apex round-robins between the box and `15.197.142.173` /
-  `3.33.152.147`. Measured: five plain-HTTP requests to `aiprotect.app` all
-  landed on the **parking** IP. Let's Encrypt HTTP-01 validation follows the
-  same rotation, so issuance for the apex will fail intermittently until the
-  parking records are gone. Delete them, and turn **Domain Forwarding off** or
-  GoDaddy re-adds them.
-- A CNAME may not coexist with other records at the same name (RFC 1034).
-  Resolvers do unpredictable things with it. Make `www` either a single CNAME
-  to `aiprotect.app` **or** a single A record — not both.
+**A correction to an earlier note in this file.** It said `www` was invalid
+because it carried "a CNAME *and* A records". It does not, and it never did.
+`dig +short A` on a CNAME'd name prints the CNAME target followed by the A
+records that name resolves to — a normal resolution chain, printed flat.
+Reading that as coexisting records was a mistake in the diagnosis, not a fault
+in the zone. The full answer section shows one CNAME at `www` and one A at the
+apex, which is exactly right.
 
-The four subdomains currently answer `308` on HTTP (that is the box's Caddy
-redirecting to HTTPS) and **fail TLS**, because no certificate exists for them
-yet. That is expected and is what Stage 1 below fixes.
-
-Lower the TTL first so a mistake is minutes rather than hours.
-
-| Type | Name | Value | TTL |
-|---|---|---|---|
-| A | `@` | `178.156.228.46` | 600 |
-| A | `www` | `178.156.228.46` | 600 |
-| A | `app` | `178.156.228.46` | 600 |
-| A | `api` | `178.156.228.46` | 600 |
-| A | `docs` | `178.156.228.46` | 600 |
-| A | `support` | `178.156.228.46` | 600 |
-
-**Delete first:** the apex A records `15.197.142.173` and `3.33.152.147` —
-GoDaddy parking. **Turn Domain Forwarding off**, or GoDaddy re-adds them.
-`www` currently carries a CNAME *and* two A records, which is invalid; make it
-one or the other.
+The parking records are gone and Domain Forwarding is off, so the apex no
+longer round-robins onto GoDaddy's servers.
 
 ### DNS alone will not work — verified 2026-08-16
 
