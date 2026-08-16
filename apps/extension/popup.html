@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>AIProtect</title>
+<style>
+  body{font:14px/1.45 system-ui,sans-serif;width:20rem;margin:0;padding:1rem;
+       background:#fff;color:#0f172a}
+  h1{font-size:1rem;margin:0 0 .75rem}
+  .card{border:1px solid #e2e8f0;border-radius:.75rem;padding:.75rem;margin-bottom:.75rem}
+  .good{border-color:#6ee7b7;background:#ecfdf5}
+  .warn{border-color:#fcd34d;background:#fffbeb}
+  .bad{border-color:#fca5a5;background:#fef2f2}
+  .muted{color:#64748b;font-size:.8rem}
+  a,button{font:inherit;display:block;width:100%;text-align:center;border:1px solid #cbd5e1;
+           border-radius:.5rem;padding:.5rem;background:none;cursor:pointer;
+           text-decoration:none;color:inherit;margin-top:.5rem}
+  @media(prefers-color-scheme:dark){
+    body{background:#020617;color:#e2e8f0}.card{border-color:#1e293b}
+    .good{background:#022c22}.warn{background:#3f2d0b}.bad{background:#450a0a}
+  }
+</style></head>
+<body>
+  <h1>AIProtect</h1>
+  <div id="state" class="card muted">Checking…</div>
+  <a href="https://app.aiprotect.app/home" target="_blank" rel="noopener">Open dashboard</a>
+  <button id="setup">Set up this browser</button>
+  <script src="popup.js" type="module"></script>
+</body></html>

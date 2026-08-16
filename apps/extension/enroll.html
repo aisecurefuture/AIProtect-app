@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Set up AIProtect</title>
+<style>
+  body{font:16px/1.55 system-ui,sans-serif;max-width:34rem;margin:0 auto;padding:2rem 1.25rem;
+       background:#fff;color:#0f172a}
+  h1{font-size:1.4rem} h2{font-size:1rem;margin-top:2rem}
+  input,button{font:inherit;width:100%;box-sizing:border-box;padding:.7rem;
+               border:1px solid #cbd5e1;border-radius:.5rem;margin-top:.4rem}
+  button{background:#2563eb;color:#fff;border-color:#2563eb;cursor:pointer;margin-top:.75rem}
+  .muted{color:#64748b;font-size:.875rem}
+  #msg{margin-top:1rem;font-weight:500}
+  @media(prefers-color-scheme:dark){body{background:#020617;color:#e2e8f0}
+    input{background:#0f172a;border-color:#1e293b;color:inherit}}
+</style></head>
+<body>
+  <h1>Set up AIProtect in this browser</h1>
+
+  <h2>Already using AIProtect on this computer?</h2>
+  <p class="muted">
+    Open the AIProtect app on this machine, choose <strong>Add install</strong>,
+    and type the code here. This browser joins the device you already have —
+    it does <strong>not</strong> use another device on your plan.
+  </p>
+  <label>Code<input id="code" maxlength="6" autocapitalize="characters" placeholder="ABC123"></label>
+  <button id="join">Join this device</button>
+
+  <h2>This is the first place you're installing it</h2>
+  <p class="muted">This will use one device on your plan.</p>
+  <label>Name this computer<input id="name" placeholder="My laptop"></label>
+  <button id="enroll">Set up as a new device</button>
+
+  <p id="msg"></p>
+  <script src="enroll.js" type="module"></script>
+</body></html>

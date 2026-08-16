@@ -193,3 +193,24 @@ export const startCheckout = (tier: string, priceId: string) =>
 
 export const openBillingPortal = () =>
   request<{ url: string }>("/billing/portal", { method: "POST" });
+
+/* ---------------- activity ---------------- */
+
+export interface ActivityItem {
+  id: string;
+  at: string;
+  headline: string;
+  tone: "good" | "attention" | "bad";
+  device: string;
+  surface: string | null;
+  detail: string;
+}
+
+export const getActivity = () =>
+  request<{
+    items: ActivityItem[];
+    /** False when the audit service is unreachable. An empty feed and a
+     *  broken one are different facts -- do not collapse them. */
+    available: boolean;
+    caveats: string[];
+  }>("/activity");

@@ -1,6 +1,6 @@
 PY ?= python3
 
-.PHONY: help test test-web verify-seams verify-consumer-scope \
+.PHONY: help test test-web test-extension verify-seams verify-consumer-scope \
         verify-consumer-scope-selftest projection up down check
 
 help:
@@ -14,7 +14,7 @@ help:
 	@echo "  make up / make down         run the detection stack"
 
 # Everything a change should have to survive.
-check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test test-web
+check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test test-web test-extension
 
 # EVERY service, not just detection. The first version of this target ran
 # `services/detection/tests/` only, which is the same defect the product code
@@ -23,7 +23,7 @@ check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test te
 # first suite to `import main` wins the name for the whole process and every
 # later suite silently asserts against another service's module.
 test:
-	$(PY) -m pytest services/ apps/ tests/ -q
+	$(PY) -m pytest services/ apps/api/tests/ tests/ -q
 
 # The two seams this product is built on. Standalone -- no services, no
 # network, no docker. If either stops holding, the architecture changed and
@@ -34,6 +34,13 @@ test:
 # itself from the frontend -- so the mapping is tested.
 test-web:
 	cd apps/web && node --test --experimental-strip-types lib/*.test.ts
+
+# The extension's two features fail in OPPOSITE directions on an outage --
+# Safe Links open so browsing keeps working, Privacy Guard toward a warning so
+# a password is not pasted in silence. Both are easy to ship backwards and
+# neither shows up in manual testing, because manual testing has the API up.
+test-extension:
+	cd apps/extension && node --test tests/*.test.mjs
 
 verify-seams:
 	$(PY) spikes/spike_policy_engine.py

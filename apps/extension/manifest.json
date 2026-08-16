@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "AIProtect",
+  "version": "0.1.0",
+  "description": "Checks links before you open them, and warns you before you share personal information with an AI assistant.",
+
+  "//permissions": [
+    "Deliberately minimal, and each one is here for a named reason. Every",
+    "permission is something a reviewer -- and a customer -- has to be told",
+    "about, and this extension can see what someone is about to type into a",
+    "chatbot. The B2B extension it was forked from asks for eleven",
+    "permissions including clipboardRead, webRequest and",
+    "declarativeNetRequest. None of those are needed to warn somebody.",
+    "",
+    "storage      the device credential and the person's settings",
+    "tabs         to show a warning page in the tab that triggered it",
+    "webNavigation  to check a link BEFORE the page loads",
+    "notifications  to tell someone what was blocked while they were away"
+  ],
+  "permissions": ["storage", "tabs", "webNavigation", "notifications"],
+
+  "//host_permissions": [
+    "http://*/* is NOT requested. Safe Links works from the webNavigation",
+    "URL alone -- the extension never needs to read the contents of an",
+    "arbitrary page. The content script is restricted to the handful of AI",
+    "assistants where Privacy Guard actually does something, so on every",
+    "other site on the web this extension cannot read anything at all."
+  ],
+  "host_permissions": ["https://api.aiprotect.app/*"],
+
+  "background": { "service_worker": "src/background.js", "type": "module" },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://grok.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AIProtect"
+  },
+
+  "options_ui": { "page": "enroll.html", "open_in_tab": true },
+
+  "icons": { "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

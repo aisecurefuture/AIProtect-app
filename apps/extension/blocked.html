@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blocked by AIProtect</title>
+<style>
+  body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;
+       min-height:100vh;background:#fef2f2;color:#7f1d1d;padding:1.5rem}
+  main{max-width:34rem;text-align:center}
+  h1{font-size:1.5rem;margin:0 0 .5rem}
+  .url{font-family:ui-monospace,monospace;font-size:.85rem;word-break:break-all;
+       background:#fff;border-radius:.5rem;padding:.5rem .75rem;margin:1rem 0}
+  a,button{font:inherit;border:1px solid currentColor;background:none;color:inherit;
+           border-radius:.5rem;padding:.6rem 1rem;cursor:pointer;text-decoration:none;
+           display:inline-block;margin:.25rem}
+  @media(prefers-color-scheme:dark){body{background:#450a0a;color:#fecaca}.url{background:#1f1f1f}}
+</style></head>
+<body><main>
+  <h1>We blocked this page</h1>
+  <p id="reason"></p>
+  <p class="url" id="url"></p>
+  <!-- A way through is deliberate. We are sometimes wrong, and a wall with no
+       door gets the extension uninstalled rather than the page avoided. -->
+  <a id="back" href="#">Go back</a>
+  <button id="anyway">Open it anyway</button>
+</main>
+<script src="blocked.js"></script></body></html>

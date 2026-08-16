@@ -1,19 +1,30 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getMe } from "@/lib/api";
+import { getMe, getActivity, type ActivityItem } from "@/lib/api";
 import { statusBanner, type Entitlement } from "@/lib/protection";
 import { StatusCard } from "@/components/Status";
+
+// Colour is never the only signal -- see components/Status.tsx.
+const TONE_MARK: Record<string, string> = { good: "\u2713", attention: "!", bad: "\u2715" };
 
 export default function Home() {
   const [ent, setEnt] = useState<Entitlement | null>(null);
   const [devices, setDevices] = useState(0);
   const [error, setError] = useState("");
+  const [activity, setActivity] = useState<{
+    items: ActivityItem[]; available: boolean; caveats: string[];
+  } | null>(null);
 
   useEffect(() => {
     getMe()
       .then((me) => { setEnt(me.entitlement); setDevices(me.devices_in_use); })
       .catch(() => setError("We couldn't load your account just now."));
+    getActivity()
+      .then(setActivity)
+      // A failed request is NOT an empty feed. Fall through to available:false
+      // so the UI says we could not load it rather than "nothing happened".
+      .catch(() => setActivity({ items: [], available: false, caveats: [] }));
   }, []);
 
   if (error) return <p role="alert" className="text-sm text-red-600">{error}</p>;
@@ -61,10 +72,43 @@ export default function Home() {
         </p>
       </section>
 
-      {/* Activity is deliberately absent rather than faked with placeholder
-          rows. The audit service is deployed but the API does not read from it
-          yet, and a timeline of invented events in a security product is the
-          worst possible placeholder. */}
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60">
+          Recent activity
+        </h2>
+        {!activity ? (
+          <p className="mt-2 text-sm opacity-70">Loading…</p>
+        ) : !activity.available ? (
+          // "You have had a quiet week" and "we cannot reach our own audit
+          // log" must not render identically.
+          <p className="mt-2 text-sm opacity-70">
+            We couldn&apos;t load your activity just now. This doesn&apos;t mean
+            nothing happened.
+          </p>
+        ) : activity.items.length === 0 ? (
+          <p className="mt-2 text-sm opacity-70">Nothing to report yet.</p>
+        ) : (
+          <ul className="mt-2 space-y-2">
+            {activity.items.slice(0, 8).map((item) => (
+              <li key={item.id}
+                  className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                <p className="text-sm font-medium">
+                  <span aria-hidden="true">{TONE_MARK[item.tone]} </span>
+                  {item.headline}
+                </p>
+                <p className="mt-0.5 text-xs opacity-60">
+                  {item.device}
+                  {item.detail ? ` · ${item.detail}` : ""}
+                  {item.at ? ` · ${new Date(item.at).toLocaleDateString()}` : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+        {activity?.caveats.map((c) => (
+          <p key={c} className="mt-2 text-xs opacity-60">{c}</p>
+        ))}
+      </section>
     </div>
   );
 }

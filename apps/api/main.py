@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DbSession
 
+import activity
 import auth
 import billing
 import devices as dv
@@ -396,6 +397,27 @@ def remove_device(
     revoked = dv.revoke_device(db, device=device)
     db.commit()
     return {"removed": True, "surfaces_revoked": revoked}
+
+
+# ---------------------------------------------------------------------------
+# Activity
+# ---------------------------------------------------------------------------
+
+
+@app.get("/activity")
+async def get_activity(
+    db: DbSession = Depends(get_db), account: Account = Depends(current_account)
+) -> Dict[str, Any]:
+    """What we did for you, on the devices THIS account owns.
+
+    The device set is resolved from the signed-in account, server-side. Every
+    consumer account shares one audit tenant, so an agent_id accepted from the
+    caller would be a read of every AIProtect customer's history behind a
+    parameter anyone can edit.
+    """
+    sub = subscription_of(db, account)
+    feed = await activity.fetch(db, subscription_id=sub.id)
+    return feed.to_dict()
 
 
 # ---------------------------------------------------------------------------

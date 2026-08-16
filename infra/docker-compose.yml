@@ -175,6 +175,8 @@ services:
       AIPROTECT_DATABASE_URL: "${AIPROTECT_DATABASE_URL:-sqlite:////data/aiprotect.db}"
       AIPROTECT_DETECTION_URL: "http://detection:8002"
       AIPROTECT_TRUST_GATE_URL: "http://url-trust-gate:8005"
+      AIPROTECT_AUDIT_URL: "http://audit:8003"
+      AUDIT_API_SECRET: "${AIPROTECT_AUDIT_API_SECRET:?set in aiprotect env}"
       DETECTION_API_SECRET: "${AIPROTECT_DETECTION_API_SECRET:?set in aiprotect env}"
       URL_TRUST_GATE_API_SECRET: "${AIPROTECT_TRUST_GATE_API_SECRET:?set in aiprotect env}"
       # Peppers the hashes of login codes and refresh tokens. A database read
@@ -190,7 +192,7 @@ services:
       STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
     volumes:
       - api_data:/data
-    depends_on: [detection, url-trust-gate]
+    depends_on: [detection, url-trust-gate, audit]
     ports:
       - "127.0.0.1:8100:8100"
 
