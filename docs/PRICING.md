@@ -10,7 +10,7 @@ Validated by `tests/test_pricing_is_coherent.py`.
 |---|---:|---:|---:|---:|---|---:|
 | **Personal** | 3 | 1 | $4.99 | $39.99 | ~$3.33/mo | $13.33 |
 | **Pro** | 10 | 1 | $9.99 | $79.99 | ~$6.67/mo | $8.00 |
-| **Family** | 30 | 6 | $14.99 | $119.99 | ~$10.00/mo | $4.00 |
+| **Family** | 30 | 7 | $14.99 | $119.99 | ~$10.00/mo | $4.00 |
 
 **No free tier.** 14-day trial, card required, then the subscription starts.
 
@@ -39,6 +39,23 @@ set generously on purpose.
 **The marginal device gets cheaper, never dearer.** $13.33 → $8.00 → $4.00 per
 device per year across the upgrade path. That is the property the rejected
 add-on violated, and it is pinned by a test.
+
+**Seven people, not six.** Changed 2026-08-16. Family was 6 to match Apple
+Family Sharing, on the reasoning that the mental model is already installed in
+the customer's head and fighting it buys nothing. That read the anchor
+backwards. Apple, Microsoft 365 Family and Google One *all* stop at 6 — so 6 is
+not a neutral default, it is the exact point at which a seven-person household
+discovers that every option on the market fails it. Two parents and five
+children is an ordinary family; so is one with a grandparent in it.
+
+Exceeding the installed model by exactly one is legible *because* the model is
+installed. "The one that fits our family" is a claim a customer checks in five
+seconds against the plan they already pay for, and it is the only line on our
+pricing page that a competitor cannot match without redesigning their own.
+
+It is also nearly free to give: devices carry the compute cost and the device
+cap did not move. The 7-person limit remains the real constraint against plan
+sharing — 30 devices never was one.
 
 ## What was rejected, and why
 

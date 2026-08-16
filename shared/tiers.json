@@ -66,15 +66,29 @@
     "family": {
       "display_name": "Family",
       "devices": 30,
-      "people": 6,
+      "people": 7,
       "price_monthly": 14.99,
       "price_annual": 119.99,
       "$comment": [
-        "6 people to match Apple Family Sharing -- the mental model is already",
-        "installed in the customer's head, and fighting it buys nothing.",
+        "7 people, not 6. This was 6 to match Apple Family Sharing, on the",
+        "reasoning that the mental model is already installed and fighting it",
+        "buys nothing. That was the wrong read. Apple, Microsoft 365 Family and",
+        "Google One ALL stop at 6, so 6 is not a neutral default -- it is the",
+        "number at which a household discovers it does not fit, and every",
+        "competitor fails them at the same place.",
+        "",
+        "Two parents and five children is an ordinary family. So is one with a",
+        "grandparent living in it. Exceeding the installed model by exactly one",
+        "is legible BECAUSE that model is installed: 'the one that fits our",
+        "family' is a claim a customer verifies in five seconds against the",
+        "plan they already pay for. We are not fighting the anchor, we are",
+        "using it.",
+        "",
+        "The 7th seat costs us nothing that 6 did not -- devices are the",
+        "compute cost and the device cap did not move.",
         "30 devices is effectively unlimited for a household, which is a",
         "simplicity win: nobody has to administer quotas inside their own home.",
-        "The 6-person limit is the real constraint against sharing."
+        "The 7-person limit is the real constraint against sharing."
       ]
     }
   },

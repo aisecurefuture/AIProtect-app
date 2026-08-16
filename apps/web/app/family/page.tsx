@@ -7,7 +7,7 @@ export default function Family() {
           product's own defect class in UI form. */}
       <p className="text-sm opacity-70">
         Family plans aren't ready yet. When they are, you'll be able to invite
-        up to 6 people and set a Kids preset for their devices.
+        up to 7 people and set a Kids preset for their devices.
       </p>
     </div>
   );
