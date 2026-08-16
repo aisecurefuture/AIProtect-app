@@ -1,0 +1,99 @@
+# AIProtect detection stack.
+#
+#   docker compose -f infra/docker-compose.yml up -d
+#
+# Build context is the repo root because production builds images on the box.
+#
+# This deployment is INDEPENDENT of CyberArmor.ai. Nothing here shares a
+# container, a volume, or a model cache with the B2B product -- that separation
+# is the point of this repository existing, and it is what keeps a consumer
+# traffic spike or a free-tier abuser from being able to affect anything else.
+
+services:
+  detection:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # run_detection_service.sh chowns the /models volume (the HuggingFace cache
+    # lives there and the volume can have arbitrary ownership) and then drops
+    # privileges to appuser.
+    cap_add: ["CHOWN", "FOWNER", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    build:
+      context: ../
+      dockerfile: services/detection/Dockerfile
+    restart: unless-stopped
+    # The five-model configuration this was forked from measured 5.24 GiB RSS.
+    # The consumer profile drops bart-large-mnli (~1.6 GB) and
+    # obi/deid_roberta_i2b2 (~1.4 GB), so the cap comes down with it. Still
+    # generous on purpose: an OOM here is a restart loop that reloads weights
+    # while traffic arrives, which is far worse than a cap never reached.
+    mem_limit: 4g
+    environment:
+      # ---- THE PROFILE ------------------------------------------------
+      # Enables prompt_injection + sensitive_data + toxicity, and declines to
+      # run output_safety. A declined detector is NOT a broken one: it is
+      # absent from MODEL_IDS, so /ready does not call it degraded, and every
+      # scan response names it in `checks_skipped_by_profile`.
+      CYBERARMOR_DETECTION_PROFILE: "consumer"   # repo default too; explicit here so the deployment states it
+
+      # Only the three models this profile loads are declared. The two the
+      # profile drops are deliberately absent rather than set to "" -- an
+      # empty model id is a broken configuration, and this is a choice.
+      ML_PROMPT_INJECTION_MODEL: "protectai/deberta-v3-base-prompt-injection-v2"
+      ML_NER_PII_MODEL: "dslim/bert-base-NER"
+      ML_TOXICITY_MODEL: "unitary/toxic-bert"
+
+      # ---- Cost controls ----------------------------------------------
+      # The result cache is the single highest-leverage change for a consumer
+      # workload: scans are pure functions of their text, and consumer traffic
+      # repeats -- the same prompts, the same handful of URLs, across users.
+      # Default is OFF everywhere; this is the deployment that opts in.
+      CYBERARMOR_DETECTION_CACHE_ENABLED: "true"
+      CYBERARMOR_DETECTION_CACHE_TTL_S: "600"
+      CYBERARMOR_DETECTION_CACHE_MAX_ENTRIES: "50000"
+
+      # Per-client limiting. The consumer API forwards a per-account or
+      # per-device x-client-id; without it every consumer request would share
+      # one API key and therefore one bucket. 0 (unlimited) is the default
+      # everywhere else, so the B2B pilot is untouched.
+      CYBERARMOR_DETECTION_RATE_LIMIT_RPM: "60"
+      CYBERARMOR_DETECTION_RATE_LIMIT_BURST: "15"
+
+      # ---- Things a consumer tier must not run ------------------------
+      # Ollama is a second container holding a 3B model, consulted only for
+      # high-risk inputs, with a 10s timeout -- double the proxy's entire 5.0s
+      # inspection budget. Doubling the footprint for a second opinion is not
+      # a free-tier economic.
+      OLLAMA_ENABLED: "false"
+
+      # The promptware tracker keys on source_url when no session_id is given.
+      # Consumer traffic collapses into a handful of endpoints, so every user
+      # would land in the same session bucket -- and this service already has
+      # a documented incident where that cross-user state blocked unrelated
+      # people's traffic for 30 minutes.
+      CYBERARMOR_PROMPTWARE_SESSION_ENABLED: "false"
+
+      DETECTION_API_SECRET: "${AIPROTECT_DETECTION_API_SECRET:?set in aiprotect env}"
+      HF_HUB_CACHE: "/models"
+      TRANSFORMERS_CACHE: "/models"
+      HF_HOME: "/models"
+      # The deployment owns the offline guarantee, not the image.
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      # Its OWN model cache. Sharing the B2B hf_models volume would couple the
+      # two deployments' seeding and reintroduce exactly the shared fate this
+      # file exists to avoid.
+      - hf_models:/models
+    ports:
+      - "127.0.0.1:8102:8002"
+    healthcheck:
+      # /health is async and answers from the event loop even while every
+      # scan thread is busy -- see the comment above _sheds_when_saturated.
+      # A sync probe here is what turned "busy" into a restart loop before.
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8002/health',timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+volumes:
+  hf_models:

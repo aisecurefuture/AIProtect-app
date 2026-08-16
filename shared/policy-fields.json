@@ -1,0 +1,263 @@
+{
+  "$comment": [
+    "THE POLICY FIELD REGISTRY. Single source of truth for what a policy rule's",
+    "`field` string is allowed to be, and -- separately -- whether anything in the",
+    "product can actually read it.",
+    "",
+    "WHY THIS FILE EXISTS. A customer typed ChatGPT.com into the box labelled",
+    "Domain, saved, and the portal showed the policy active at priority 100. It",
+    "enforced nothing: `request.domain` resolved on no evaluator anywhere. Saved,",
+    "displayed active, doing nothing.",
+    "",
+    "WHO READS IT. services/policy/policy_fields.py loads this file at import and",
+    "services/policy/main.py's PolicyCreate/PolicyUpdate validators reject any rule",
+    "whose field is unknown here or whose `resolves_on` is empty. That is the only",
+    "programmatic consumer today; see CONSUMERS below for the honest limits.",
+    "",
+    "resolves_on IS A CLAIM, NOT A FACT THIS FILE CAN ENFORCE. An entry saying a",
+    "field resolves on the server does not make it so -- it is the CLAIM that a",
+    "producer populates it and an evaluator can read it. Two things falsify a bad",
+    "claim: services/policy/tests/test_policy_field_registry_conformance.py",
+    "mechanically rejects a server claim whose prefix is not an EvaluationContext",
+    "section, and the per-surface execution tests",
+    "(tests/test_request_domain_server_engine.py,",
+    "extensions/chromium-shared/tests/test_domain_field_semantics.mjs) drive the",
+    "real code. A claim added here without an execution test behind it is exactly",
+    "the defect this file was created to stop."
+  ],
+  "version": 1,
+  "surfaces": {
+    "ext-js": "extensions/chromium-shared/background.js evaluatePolicy -- the live JS evaluator, reached from the webNavigation listener and from content.js/ai_monitor.js evaluate_policy messages.",
+    "ext-dnr": "extensions/chromium-shared/background.js extractURLFilters -- the declarativeNetRequest compiler for `block` policies.",
+    "ext-upload-dnr": "extensions/chromium-shared/background.js extractUploadInitiatorScope -- scopes `block_upload` policies to initiator domains. NARROWER THAN IT LOOKS: a field that resolves ONLY here scopes upload blocking and is inert for navigation, warn, redact and prompt gating.",
+    "server-engine": "services/policy/policy_engine.py PythonPolicyEngine, reached from /ext_authz/check (Envoy) and /policies/evaluate (proxy, runtime service).",
+    "control-plane-events": "services/control-plane/event_policy.py, reached from _store_telemetry_event -- the single choke point every telemetry and audit event passes through. Evaluates AFTER the fact, so it is asynchronous and cannot block ingestion, and actions that only make sense before the fact (block, redact, block_upload) are counted as inert rather than executed. Evaluation itself is delegated to the SAME server-engine over /policies/evaluate; this surface is a producer, not a fifth evaluator."
+  },
+  "value_kinds": {
+    "string": "Compared as text by the rule's own operator. No structural validation at save time.",
+    "host": "A single hostname, matched EXACTLY. `chatgpt.com` does not match `www.chatgpt.com`.",
+    "domain": "A registrable domain, matched as the domain AND everything under it (exact-or-dot-boundary: host == value OR host endswith '.' + value). Validated at save time: lowercased, at least two labels, LDH characters only, no scheme, no path, no wildcard, no leading or trailing dot.",
+    "public_suffix_limitation": "OUT OF SCOPE, DECIDED EXPLICITLY 2026-07-30 rather than left unstated. The `domain` guard is a minimum-LABEL-COUNT guard, not a public suffix check. It rejects `com` (one label) but ACCEPTS `co.uk`, `com.au`, `co.jp` -- two labels each -- and a rule authored on `co.uk` therefore covers every site under that public suffix. Shipping a public suffix list means a ~15k-entry file that goes stale without a refresh mechanism, and this round has no network-fetch budget. The mitigation is to show the operator the effective match set before they save, not to silently widen or narrow the guard."
+  },
+  "notes": {
+    "why_domain_and_hostname_both_exist": "Founder decision 2026-07-30, binding: request.domain is NOT an alias of request.hostname. A Domain rule means the domain and everything under it; a Hostname rule is exact. Both fields stay and both are real.",
+    "minimum_label_guard": "The whole risk of request.domain. A previous attempt compiled a policy value straight into the declarativeNetRequest filter '||' + value + '^'. That construct is CORRECT for domain semantics. The value was never guarded, so a value of 'com' compiled to ||com^ and blocked the entire .com web -- measured in real Chromium, and the work was reverted for it. The guard is applied in THREE places, because any one alone is insufficient: at save time (services/policy/main.py PolicyCreate/PolicyUpdate), at evaluation time (policy_engine.py _evaluate_leaf_rule and background.js evaluateLeafRule -- so a row written before validation existed is still inert), and at compile time (background.js extractURLFilters -- so such a row can never reach DNR). See value_kinds.public_suffix_limitation for what the guard deliberately does NOT cover.",
+    "derived_not_carried": "request.domain is DERIVED at evaluation time from the host value each surface already puts on the wire (request.host on the server producers, request.hostname on the extension navigation context). No producer writes a separate `domain` key. Rationale: one value on the wire cannot be forgotten by one producer out of ten, which is the exact failure mode this registry exists to stop. NAMED CONSEQUENCE: request.domain inherits whatever host key the surface populates, so on the extension's prompt-submission context (content.js, which carries no host key at all) a Domain rule still cannot fire. A Domain rule governs navigation and uploads, not prompt submission.",
+    "resolves_on_empty_means_dead": "An entry with `resolves_on: []` is a field a shipped authoring surface can still emit and NOTHING in the product can read. It is listed so the save-time validator can tell an operator 'this field is known and cannot be enforced' instead of 'unknown field', and so the conformance test can account for every emitter. Saving a rule on such a field is REJECTED. Making one of them real is a separate piece of work, not a registry edit.",
+    "consumers": "ONE programmatic consumer: services/policy/policy_fields.py (Python). The browser surfaces do NOT read this file -- extensions/chromium-shared imports nothing from shared/, and adding a fetch to the portals was out of scope this round. shared/policy-builder.js FIELD_GROUPS is a hand-maintained SUBSET used only to build an autocomplete <datalist>; the conformance test asserts it is a subset of this file, so drift in the dangerous direction (a suggestion the save gate would reject) fails loudly, while drift in the safe direction (a registry field nobody suggests) only costs autocomplete coverage.",
+    "retired_from_suggestions": "Removed from shared/policy-builder.js FIELD_GROUPS on 2026-07-30 because they resolve on no evaluator and offering them invites a rule that can never fire: request.source_ip, request.user_agent, request.user_id, request.user_email, request.user_group, request.username, request.tenant_id, agent.agent_id, agent.hostname, agent.username, agent.os, endpoint.hostname, endpoint.ip, response.text, model, tool_name, event.source. They are NOT listed in `fields` below -- no shipped surface emits them any more, and listing dead fields nobody emits would only pad the registry. A stored policy that already uses one is refused on EDIT (unknown field) and marked `unenforceable` on read; it is never rewritten or dropped.",
+    "deployment": "services/policy/Dockerfile COPYs this file to /app/shared/policy-fields.json. If it is missing at runtime the policy service raises at import and does not start -- deliberately. A validator that silently degrades to 'accept everything' would reinstate the exact defect it was built to remove."
+  },
+  "fields": [
+    {
+      "name": "request.url",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js", "ext-dnr", "server-engine"],
+      "note": "Extension: every evaluate_policy context builder sets it. Server: ext_authz sets it to the original path, the proxy and runtime services set it to the full URL -- so `contains` behaves differently on the two server producers."
+    },
+    {
+      "name": "request.host",
+      "value_kind": "host",
+      "match_kind": "exact",
+      "resolves_on": ["server-engine"],
+      "note": "Server only, from the Host / x-forwarded-host header (ext_authz) or the parsed URL (proxy, runtime). Taken VERBATIM: not lowercased and the port is not stripped, so `Host: ChatGPT.com` or `chatgpt.com:443` is a no-match the governed party can choose. request.domain does not share that weakness -- it normalises before comparing."
+    },
+    {
+      "name": "request.hostname",
+      "value_kind": "host",
+      "match_kind": "exact",
+      "resolves_on": ["ext-js", "ext-dnr", "ext-upload-dnr"],
+      "note": "EXACT match, browser only. KNOWN GAP, OUT OF SCOPE THIS ROUND: no server producer writes request.hostname (the server writes request.host), so a Hostname rule enforces in Chrome and on no server enforcement path. This is now a visible asymmetry with request.domain, which enforces on both."
+    },
+    {
+      "name": "request.domain",
+      "value_kind": "domain",
+      "match_kind": "domain-suffix",
+      "resolves_on": ["ext-js", "ext-dnr", "server-engine"],
+      "note": "The domain and everything under it. chatgpt.com matches chatgpt.com, www.chatgpt.com, api.chatgpt.com; it does NOT match notchatgpt.com, evil-chatgpt.com or chatgpt.com.evil.test. Derived from the surface's host value -- see notes.derived_not_carried. Guarded -- see notes.minimum_label_guard."
+    },
+    {
+      "name": "request.path",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js", "server-engine"],
+      "note": "Extension: the navigation listener sets it. Server: the runtime service sets it; the Envoy ext_authz producer does NOT -- it puts the path in request.url. So a request.path rule enforces on the runtime path and not through Envoy."
+    },
+    {
+      "name": "request.method",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js", "server-engine"],
+      "note": "Extension: form-submit and upload contexts only, not navigation. Server: all three producers."
+    },
+    {
+      "name": "request.scheme",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "Runtime service producer only."
+    },
+    {
+      "name": "request.headers",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "A dict, not a string. Only `exists` / `not_exists` are meaningful on it; text operators stringify the whole dict."
+    },
+    {
+      "name": "request.body_snippet",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "Server only. On the Envoy path this is the whole body Envoy delivered; on the proxy and runtime paths it is capped at 2048 bytes, so the same rule sees different amounts of text depending on the enforcement point."
+    },
+    {
+      "name": "request.type",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Extension only. One of navigation, ai_service_access, prompt_submission, ai_prompt_submission, form_submit, upload."
+    },
+    {
+      "name": "request.ai_service",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Extension ai_monitor prompt-submission context only."
+    },
+    {
+      "name": "user.client_ip",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "From x-forwarded-for. Client-supplied and trivially spoofable; do not use it as an authorization control."
+    },
+    {
+      "name": "content.has_pii",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Boolean in the context; policy values authored in the portal arrive as the strings 'true'/'false' and the evaluators compare loosely."
+    },
+    {
+      "name": "content.pii_classes",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "List of pii.<label> strings."
+    },
+    {
+      "name": "content.has_file_upload",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Form-submit and upload contexts."
+    },
+    {
+      "name": "content.file_count",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Form-submit and upload contexts."
+    },
+    {
+      "name": "content.file_names",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Form-submit and upload contexts."
+    },
+    {
+      "name": "content.file_types",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Form-submit and upload contexts."
+    },
+    {
+      "name": "content.text_length",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Prompt-submission contexts."
+    },
+    {
+      "name": "content.has_injection",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "ai_monitor prompt-submission context."
+    },
+    {
+      "name": "prompt.text",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Browser prompt-submission contexts only. No server producer populates a `prompt` section, so a prompt rule never fires through Envoy or the proxy."
+    },
+    {
+      "name": "prompt.pii",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Set only when PII was actually detected; absent otherwise, which is why `exists` is the operator that behaves as an author expects."
+    },
+    {
+      "name": "prompt.classification",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js"],
+      "note": "Set to 'prompt_injection' by ai_monitor when an injection pattern matched; otherwise absent."
+    },
+    {
+      "name": "route.destination",
+      "value_kind": "host",
+      "match_kind": "operator",
+      "resolves_on": ["ext-js", "ext-upload-dnr"],
+      "note": "Extension navigation context, AND ONLY FOR RECOGNISED AI-SERVICE HOSTS -- left unset for ordinary browsing on purpose. WARNING carried over from the compliance packs: four shipped templates (ISO 27001, SEC Cyber, FINRA Cyber, ISO 42001) use `route.destination not_in [...]` at action=block. The server engine has no `route` section at all. CORRECTED 2026-07-31 -- this note previously said those rules were therefore 'inert server-side', and that was exactly inverted. Inert would have been safe. `route.destination` resolved to None, and `None not_in [anything]` is True in Python, so each of those four templates MATCHED EVERY REQUEST at action=block -- ordinary non-AI browsing included -- and shadowed every policy beneath it. Confirmed live on a tenant that had the ISO 27001 pack enabled. It is not the unresolved $artifact: placeholder: a correctly populated approved_providers artifact matches everything just the same, because the field is None either way. The word 'inert' in this file is the likeliest reason nobody escalated it. FIXED at policy_engine.NEGATIVE_OPERATORS_NEEDING_A_VALUE -- the server now treats an absent field as inapplicable AND records a problem, matching the guard the browser and endpoint-agent engines already had."
+    },
+    {
+      "name": "provider",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["ext-upload-dnr"],
+      "note": "RESOLVES ON EXACTLY ONE MECHANISM. extractUploadInitiatorScope maps a provider id (openai, anthropic, ...) to initiator domains via PROVIDER_DOMAINS, so a provider rule scopes block_upload policies. It is INERT for navigation, warn, redact and prompt gating, and structurally impossible server-side (`provider` is not an EvaluationContext section). The Proxy Controls Provider box therefore produces a rule that only bites on uploads. Open question for the founder: keep the box with that caveat surfaced in the UI, or remove it."
+    },
+    {
+      "name": "identity.user_id",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "LIVE ON THE ENDPOINT PATH ONLY, since 2026-07-31. Emitted by the Proxy Controls User box (customer-portal/app.js proxyPolicyPayload, byte-identically in admin-dashboard/app.js). It was DEAD because `identity` was not an EvaluationContext section, so no caller could construct a context producing it. The section now exists AND has a producer: agents/endpoint-agent/local_proxy/transparent_proxy.py `_local_user_id`, which is installed as a LaunchAgent under ${HOME}/Library/LaunchAgents (install_local_proxy.sh refuses to run under sudo) and therefore runs as the human whose traffic it inspects, making getpass.getuser() a fact rather than a claim. READ BEFORE AUTHORING: the server-side MITM proxy and the ext_authz path deliberately do NOT populate it. The only identity available to them is a client-supplied header, and the client is the party a per-user rule governs -- reading it there would let anyone bound by the rule set the header to another name and walk past it, while the audit trail recorded the name they chose. A forgeable field is worse than an unenforceable one. So a rule here ENFORCES for endpoint-agent traffic and is INAPPLICABLE elsewhere, where the field is absent and the engine skips the leaf and records a problem rather than letting a negative operator match everything. Extending it to the server path needs authenticated identity on the wire -- the same problem docs/specs/sdk-policy-evaluation-integration.md S2 must solve for agent_id."
+    },
+    {
+      "name": "event.event_type",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["control-plane-events"],
+      "note": "RESOLVED 2026-08-01 by services/control-plane/event_policy.py, which populates event.* from every stored telemetry event and evaluates it against tenant policy. HISTORY, because the shape of the failure matters: this was emitted by shipped compliance pack templates and by nothing else. `event` became an EvaluationContext section on 2026-07-31, but a section is not a producer -- resolves_on deliberately stayed [] then, since marking it resolved because the section existed would have been the same false claim this file had to correct for route.destination. The cost of the gap was concrete: policy_fields.py rejects any rule whose field resolves nowhere (it tests `not resolves_on`, and [] is falsy), so 31 of the 58 shipped pack templates could not be saved at all -- nist-800-53, nist-csf, cmmc-l3 and csa-ccm would each have seeded 1 of 4. Separately, twelve `monitor` templates use `not_equals heartbeat`, which matched EVERY request for the same reason route.destination did -- at monitor rather than block, so it was invisible. Guarded since 2026-07-31 by policy_engine.NEGATIVE_OPERATORS_NEEDING_A_VALUE. NOTE: this surface is after-the-fact. `block` and `redact` cannot act on an event that has already happened and are counted inert there."
+    },
+    {
+      "name": "event.severity",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["control-plane-events"],
+      "note": "RESOLVED 2026-08-01. Same origin and same producer as event.event_type: services/control-plane/event_policy.py populates it from the stored event's severity. One shipped template depends on it -- sec-cyber SEC-MAT-1, the SEC four-business-day materiality trigger, keyed on `event.severity in [critical, high]`."
+    },
+    {
+      "name": "response.classification",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "LIVE ON THE MITM RESPONSE HOOK, since 2026-07-31. Emitted by shipped compliance pack templates, notably '[NIST AI RMF] Monitor AI Output for Elevated Risk' (response.classification equals high_risk). The old reason for DEAD -- 'the response has not been generated yet at the point every enforcement path evaluates' -- was true of the REQUEST path only. Both MITM proxies have a response hook that already held the fully decoded body and already ran detection over it with direction=response; nothing carried that verdict to tenant policy. They now do, via `_response_section`. The value is detection's own published action mapped to a band (block->high_risk, warn->medium_risk, allow->low_risk); the 0.70/0.35 thresholds stay in services/detection so a second copy cannot drift. CRITICALLY the section is OMITTED, not defaulted, whenever scan_complete is false or detection could not be reached: a response nobody scanned must not read as one scanned and found clean, so the field is absent and the engine skips the leaf and records a problem. Not produced on the request path (no response exists yet), nor by ext_authz or the runtime service."
+    },
+    {
+      "name": "response.pii",
+      "value_kind": "string",
+      "match_kind": "operator",
+      "resolves_on": ["server-engine"],
+      "note": "LIVE ON THE MITM RESPONSE HOOK, since 2026-07-31. Same origin and same producer as response.classification -- see that entry, including why the field is omitted rather than set false when the scan did not complete. True when detection returned a `sensitive_data` finding for the response body, and only that finding type: treating any detection as PII would fire a tenant's redaction rules on prompt-injection hits."
+    }
+  ]
+}
