@@ -1,0 +1,21 @@
+# What CI installs to run the gate.
+#
+# Deliberately the API's runtime dependencies and nothing else -- the same set
+# apps/api/Dockerfile installs. A test that only passes because CI happened to
+# have a package the image does not is a test that proves nothing about what
+# ships.
+#
+# NOT torch/transformers. 7 of the 40 service test files under services/ need
+# them, and installing ~2 GB of ML wheels on every push to cover 7 files is a
+# cost this repo does not need yet. Those tests are NOT in the gate, and
+# ci.yml says so out loud rather than letting a green tick imply coverage that
+# is not there.
+
+fastapi
+uvicorn[standard]
+pydantic
+sqlalchemy
+alembic
+httpx
+cryptography
+stripe
