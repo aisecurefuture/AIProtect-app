@@ -105,6 +105,30 @@ class Subscription(Base):
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)
     grace_ends_at = Column(DateTime(timezone=True), nullable=True)
 
+    # -- Protection settings ------------------------------------------------
+    # Account-wide, deliberately: they direct EVERY surface on EVERY device --
+    # the browser extension and the desktop agent alike. A per-device fail
+    # mode would mean a customer who set "block when you can't check" on their
+    # laptop is silently failing open on their phone, which is the kind of
+    # split that makes a security setting worse than not having one.
+
+    #: "open" | "closed". What every surface does when it CANNOT check
+    #: something. Consumer default is open; CyberArmor.ai's B2B default is
+    #: closed (tenant decision 2026-08-06). The divergence is deliberate -- a
+    #: household has no administrator to call when the browser stops working,
+    #: and an uninstalled extension protects nobody. See
+    #: apps/extension/src/verdict.js, which is the single place this value is
+    #: interpreted.
+    fail_mode = Column(String, nullable=False, default="open")
+
+    #: The local proxy -- "protect everything", including desktop AI apps with
+    #: no extension surface. OFF by default and opted into at install time,
+    #: because turning it on installs a root certificate into the machine's
+    #: trust store. That is the single most invasive thing this product can
+    #: do, it is what makes coverage complete, and it is not something to
+    #: enable on a consumer's behalf.
+    deep_inspection = Column(Boolean, nullable=False, default=False)
+
     #: apple | google | stripe. Which store or processor owns the truth about
     #: this subscription; reconciliation needs to know who to ask.
     billing_source = Column(String, nullable=True)

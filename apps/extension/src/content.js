@@ -40,8 +40,8 @@ async function init() {
     event.preventDefault();
     event.stopPropagation();
 
-    const { ok, result } = await checkText(text);
-    const decision = submissionDecision(result, { ok });
+    const { ok, result, failMode } = await checkText(text);
+    const decision = submissionDecision(result, { ok }, failMode);
 
     if (decision.action === ALLOW) { cleared = true; resend(event); return; }
 

@@ -163,3 +163,104 @@ test("the two features fail in OPPOSITE directions", () => {
   assert.equal(nav.action, ALLOW);
   assert.equal(sub.action, WARN);
 });
+
+/* ---------------- fail mode: one setting, every path ---------------- */
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  failedCheckDecision,
+  resolveFailMode,
+  DEFAULT_FAIL_MODE,
+  FAIL_OPEN,
+  FAIL_CLOSED,
+} from "../src/verdict.js";
+
+const UNREACHABLE = { ok: false };
+
+test("the consumer default is fail-OPEN, and it is a product decision", () => {
+  // CyberArmor.ai defaults to fail-CLOSED (tenant decision 2026-08-06). This
+  // product defaults the other way on purpose: a household has no admin to
+  // call when the browser stops working, and an uninstalled extension
+  // protects nobody. Flipping this is a product call, not a refactor.
+  assert.equal(DEFAULT_FAIL_MODE, FAIL_OPEN);
+  assert.equal(navigationDecision(null, UNREACHABLE).action, ALLOW);
+  assert.equal(submissionDecision(null, UNREACHABLE).action, WARN);
+});
+
+test("fail-closed blocks BOTH features, not just one", () => {
+  // THE CORE PROPERTY, and the exact shape of the 2026-08-06 defect: one
+  // setting honoured by one path and ignored by the other, while every
+  // description of the configuration claimed otherwise.
+  assert.equal(navigationDecision(null, UNREACHABLE, FAIL_CLOSED).action, BLOCK);
+  assert.equal(submissionDecision(null, UNREACHABLE, FAIL_CLOSED).action, BLOCK);
+});
+
+test("fail-open allows BOTH features to proceed", () => {
+  assert.equal(navigationDecision(null, UNREACHABLE, FAIL_OPEN).action, ALLOW);
+  assert.notEqual(submissionDecision(null, UNREACHABLE, FAIL_OPEN).action, BLOCK);
+});
+
+test("a partial scan obeys the fail mode too", () => {
+  // `scan_complete: false` is a kind of failed check. Leaving it an
+  // unconditional WARN would put a hole in fail-closed at precisely the point
+  // the detection service went to trouble to report.
+  const partial = { found: [], scan_complete: false };
+  assert.equal(submissionDecision(partial, { ok: true }, FAIL_CLOSED).action, BLOCK);
+  assert.equal(submissionDecision(partial, { ok: true }, FAIL_OPEN).action, WARN);
+});
+
+test("an unrecognised fail mode resolves to the default, never to blocking", () => {
+  // A typo, a null, or a value from a newer portal than this install knows
+  // must not silently brick somebody's browsing.
+  for (const bad of [undefined, null, "", "closd", "CLOSED", 0, {}, "true"]) {
+    assert.equal(resolveFailMode(bad), DEFAULT_FAIL_MODE, `resolved ${JSON.stringify(bad)}`);
+    assert.notEqual(navigationDecision(null, UNREACHABLE, bad).action, BLOCK);
+  }
+});
+
+test("a fail-closed block says it was US and that it is not the site's fault", () => {
+  // The uninstall path: a block that does not identify itself is
+  // indistinguishable from the destination being broken, and the rational
+  // response to "ChatGPT is broken" is to remove what you installed last.
+  for (const what of ["navigation", "submission"]) {
+    const d = failedCheckDecision(what, FAIL_CLOSED);
+    assert.match(d.notice, /AIProtect/, `${what} must name us`);
+    assert.match(d.notice, /couldn't/i, `${what} must say we could not check`);
+    assert.match(d.notice, /temporary|doesn't mean/i, `${what} must not imply the site is unsafe`);
+  }
+});
+
+test("a failed check never reports itself as checked", () => {
+  for (const mode of [FAIL_OPEN, FAIL_CLOSED]) {
+    assert.equal(navigationDecision(null, UNREACHABLE, mode).checked, false);
+    assert.equal(submissionDecision(null, UNREACHABLE, mode).checked, false);
+  }
+});
+
+test("fail-closed makes a submission non-dismissible; fail-open does not", () => {
+  assert.equal(isDismissible(submissionDecision(null, UNREACHABLE, FAIL_CLOSED)), false);
+  assert.equal(isDismissible(submissionDecision(null, UNREACHABLE, FAIL_OPEN)), true);
+});
+
+test("no decision path branches on fail mode on its own", () => {
+  // STRUCTURAL, not behavioural. The 2026-08-06 defect was not a wrong
+  // branch -- it was a SECOND branch. Behavioural tests above pass just as
+  // happily with the logic duplicated in two places, right up until the two
+  // copies drift. So: the fail-mode constants may only be compared inside the
+  // single resolution point.
+  const src = readFileSync(
+    fileURLToPath(new URL("../src/verdict.js", import.meta.url)),
+    "utf8"
+  );
+  // Strip block comments -- the header discusses these names at length.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "");
+  const comparisons = code.match(/===\s*FAIL_(OPEN|CLOSED)|FAIL_(OPEN|CLOSED)\s*===/g) ?? [];
+  assert.ok(
+    comparisons.length <= 3,
+    `fail-mode is compared ${comparisons.length} times. It belongs in ` +
+      `resolveFailMode() and the two mode checks that consume it -- a new ` +
+      `comparison is a second code path reading one setting, which is the ` +
+      `defect this file is shaped to prevent.`
+  );
+});

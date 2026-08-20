@@ -22,6 +22,10 @@ const KEYS = {
   token: "aiprotect.token",
   credential: "aiprotect.credential",
   deviceId: "aiprotect.deviceId",
+  // The account's fail mode, as of the last successful call. Cached because
+  // it is consulted PRECISELY when the API is unreachable -- which is the one
+  // moment we cannot go and ask for it. See rememberSettings().
+  failMode: "aiprotect.failMode",
 };
 
 async function stored(keys) {
@@ -35,7 +39,29 @@ export async function getConfig() {
     token: s[KEYS.token] || null,
     credential: s[KEYS.credential] || null,
     deviceId: s[KEYS.deviceId] || null,
+    // Undefined until the first successful call. verdict.js resolves that to
+    // the default rather than to `closed`, so a fresh install never blocks
+    // browsing before it has ever spoken to us.
+    failMode: s[KEYS.failMode] ?? null,
   };
+}
+
+/** The cached fail mode. Never throws, never blocks on the network. */
+export async function getFailMode() {
+  const s = await stored([KEYS.failMode]);
+  return s[KEYS.failMode] ?? null;
+}
+
+/**
+ * Refresh the cached settings from a response that carried them.
+ *
+ * Every check response includes a `protection` block for exactly this reason:
+ * the cache updates on every success, so it cannot silently go stale between
+ * a portal change and the next time this surface happens to ask.
+ */
+async function rememberSettings(body) {
+  const mode = body?.protection?.fail_mode;
+  if (mode) await chrome.storage.local.set({ [KEYS.failMode]: mode });
 }
 
 export async function saveEnrollment({ credential, deviceId }) {
@@ -94,12 +120,24 @@ async function call(path, { method = "POST", body, timeoutMs = 6000 } = {}) {
 
 export async function checkLink(url) {
   const res = await call("/safe-links", { body: { url } });
-  return { ok: res.ok, consumer: res.body?.consumer ?? null, status: res.status };
+  if (res.ok) await rememberSettings(res.body);
+  return {
+    ok: res.ok,
+    consumer: res.body?.consumer ?? null,
+    status: res.status,
+    failMode: res.body?.protection?.fail_mode ?? (await getFailMode()),
+  };
 }
 
 export async function checkText(text) {
   const res = await call("/privacy-check", { body: { text } });
-  return { ok: res.ok, result: res.body ?? null, status: res.status };
+  if (res.ok) await rememberSettings(res.body);
+  return {
+    ok: res.ok,
+    result: res.body ?? null,
+    status: res.status,
+    failMode: res.body?.protection?.fail_mode ?? (await getFailMode()),
+  };
 }
 
 /** Join an already-enrolled device using a code from another install. */

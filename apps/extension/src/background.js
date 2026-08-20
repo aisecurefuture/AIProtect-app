@@ -27,8 +27,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   const cached = recent.get(url);
   if (cached && Date.now() - cached.at < RECENT_TTL_MS) return;
 
-  const { ok, consumer } = await checkLink(url);
-  const decision = navigationDecision(consumer, { ok });
+  const { ok, consumer, failMode } = await checkLink(url);
+  // failMode comes from this response when the call worked, and from the
+  // cached copy when it did not -- which is the case that matters.
+  const decision = navigationDecision(consumer, { ok }, failMode);
   remember(url, decision);
 
   if (decision.action === BLOCK) {
