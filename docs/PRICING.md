@@ -72,6 +72,16 @@ sharing — 30 devices never was one.
 - **It charges friction at the worst moment.** Someone adding a 6th device is
   the most engaged user you have, the one most likely to renew and refer.
 
+### What counts as a device
+
+Anything the agent or extension is installed on, including a **single-board
+computer**. A maker with a Raspberry Pi running ROS 2 is a real customer —
+they buy the board at Micro Center or direct, flash it themselves, and it
+calls AI APIs from a machine with no browser on it, which is precisely the
+case the desktop agent exists for. A Pi occupies one device slot, the same as
+a laptop. See `apps/agent/README.md` for what is and is not covered there;
+arm64 support is the prerequisite and is not built yet.
+
 ### A 1-device entry tier
 
 Under [one device, many surfaces](MULTI-DEVICE.md), a laptop running the

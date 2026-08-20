@@ -1,20 +1,24 @@
 PY ?= python3
 
-.PHONY: help test test-web test-extension verify-seams verify-consumer-scope \
-        verify-consumer-scope-selftest projection up down check
+.PHONY: help test test-web test-extension test-agent test-schema verify-seams \
+        verify-consumer-scope verify-consumer-scope-selftest verify-prices \
+        projection up down check
 
 help:
 	@echo "AIProtect"
 	@echo ""
 	@echo "  make check                  everything below, in order"
 	@echo "  make test                   detection test suite"
+	@echo "  make test-agent             the desktop agent carries no B2B names"
+	@echo "  make test-schema            models.py and the migrations agree"
+	@echo "  make verify-prices          Stripe charges what tiers.json promises"
 	@echo "  make verify-seams           prove the two library seams still hold"
 	@echo "  make verify-consumer-scope  no tenant_id in apps/"
 	@echo "  make projection             what the consumer profile costs and saves"
 	@echo "  make up / make down         run the detection stack"
 
 # Everything a change should have to survive.
-check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test test-web test-extension
+check: verify-consumer-scope-selftest verify-consumer-scope verify-seams test-schema test test-web test-extension test-agent
 
 # EVERY service, not just detection. The first version of this target ran
 # `services/detection/tests/` only, which is the same defect the product code
@@ -41,6 +45,31 @@ test-web:
 # neither shows up in manual testing, because manual testing has the API up.
 test-extension:
 	cd apps/extension && node --test tests/*.test.mjs
+
+# The desktop agent is a fork of a ~49k-line B2B agent whose product name is
+# written into service names, bundle ids, install paths and notification
+# titles as string literals. Renaming by hand gets MOST of them; the ones it
+# misses ship "/var/log/cyberarmor" to a consumer's Mac. The guard is
+# mechanical so the port cannot regress it one module at a time.
+test-agent:
+	$(PY) apps/agent/tests/test_the_agent_carries_no_cyberarmor_identifiers.py
+
+# models.py and the migrations must describe the same schema. Every other test
+# builds its database straight from the models with create_all, so a model
+# changed without a revision passes the entire suite -- and then a fresh deploy
+# migrates to a table WITHOUT the column, starts, reports healthy, and fails on
+# the first request that touches it.
+test-schema:
+	$(PY) apps/api/tests/test_the_schema_matches_the_migrations.py
+
+# Does each configured Stripe price charge what its tier promises? The API
+# already stops a CLIENT mismatching tier and price; this stops the six
+# near-identical env vars doing it. Needs STRIPE_SECRET_KEY to check amounts;
+# without one it still catches missing and duplicated ids, and says plainly
+# that the amounts went unchecked. NOT in `make check` -- it is a deploy-time
+# check against a live Stripe account, not a source-tree property.
+verify-prices:
+	$(PY) scripts/deployment/verify_stripe_prices.py
 
 verify-seams:
 	$(PY) spikes/spike_policy_engine.py
