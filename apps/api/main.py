@@ -11,6 +11,7 @@ Native app, so nothing here assumes a browser.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -26,8 +27,11 @@ import billing
 import devices as dv
 import entitlements
 import presets
+import protection_settings
 from db import get_db, init_db
 from models import Account, Device, Subscription
+
+logger = logging.getLogger("aiprotect.api")
 
 DETECTION_URL = os.getenv("AIPROTECT_DETECTION_URL", "http://detection:8002")
 DETECTION_SECRET = os.getenv("DETECTION_API_SECRET", "")
@@ -99,6 +103,13 @@ def require_protection(
                     "entitlement": ent.to_dict()},
         )
     return ent
+
+
+def settings_of(
+    db: DbSession = Depends(get_db), account: Account = Depends(current_account)
+) -> Dict[str, Any]:
+    """The protection settings block, for surfaces that need to obey it."""
+    return protection_settings.as_dict(subscription_of(db, account))
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +217,7 @@ def me(
         "account": {"id": account.id, "email": account.email},
         "entitlement": ent.to_dict(),
         "devices_in_use": dv.active_device_count(db, sub.id),
+        "protection": protection_settings.as_dict(sub),
     }
 
 
@@ -230,6 +242,12 @@ def tiers() -> Dict[str, Any]:
         },
         "upgrade_path": entitlements.tier_names(),
         "trial_days": entitlements.trial_days(),
+        "cadences": list(billing.CADENCES),
+        # Which (tier, cadence) pairs have a Stripe price configured. A picker
+        # that renders a Buy button for a plan with no price sends the
+        # customer to a 503 at the moment they decided to pay us, so the
+        # unavailability is stated here instead of discovered there.
+        "purchasable": billing.configured_prices(),
     }
 
 
@@ -426,8 +444,16 @@ async def get_activity(
 
 
 class CheckoutIn(BaseModel):
+    """What the customer chose: a plan and how often to pay for it.
+
+    Deliberately does NOT carry a Stripe price id. The tier is what the
+    webhook reads back to grant entitlement; if the client also named the
+    price, the two could disagree and a Personal payment could buy Family.
+    The price is resolved from the tier server-side in `billing.price_id_for`.
+    """
+
     tier: str
-    price_id: str
+    cadence: str = "annual"
 
 
 @app.post("/billing/checkout")
@@ -439,11 +465,20 @@ def checkout(
     sub = subscription_of(db, account)
     if payload.tier not in entitlements.tier_names():
         raise HTTPException(status_code=400, detail={"reason": "unknown_tier"})
+    if payload.cadence not in billing.CADENCES:
+        raise HTTPException(status_code=400, detail={"reason": "unknown_cadence"})
     try:
         out = billing.create_checkout_session(
             account_email=account.email, tier=payload.tier,
-            price_id=payload.price_id, subscription_id=sub.id,
+            cadence=payload.cadence, subscription_id=sub.id,
         )
+    except billing.BillingNotConfigured as exc:
+        # A plan with no price configured is a deployment gap, not a customer
+        # error, and it must not degrade into charging a different price.
+        logger.error("checkout refused: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "plan_not_purchasable"}
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
         raise HTTPException(
             status_code=503, detail={"reason": "billing_unavailable"}
@@ -517,6 +552,66 @@ async def stripe_webhook(
 # ---------------------------------------------------------------------------
 
 
+class ProtectionSettingsIn(BaseModel):
+    """Only what the person can actually choose.
+
+    `fail_mode` is validated against a closed set rather than coerced -- an
+    unrecognised value is refused here so it can never be written to a row and
+    then resolved to something surprising on a device.
+    """
+
+    fail_mode: Optional[str] = None
+    deep_inspection: Optional[bool] = None
+
+
+@app.get("/protection-settings")
+def get_protection_settings(
+    db: DbSession = Depends(get_db), account: Account = Depends(current_account)
+) -> Dict[str, Any]:
+    sub = subscription_of(db, account)
+    out = protection_settings.as_dict(sub)
+    out["fail_modes"] = list(protection_settings.FAIL_MODES)
+    return out
+
+
+@app.put("/protection-settings")
+def put_protection_settings(
+    payload: ProtectionSettingsIn,
+    db: DbSession = Depends(get_db),
+    account: Account = Depends(current_account),
+) -> Dict[str, Any]:
+    """Set the fail mode and deep inspection for EVERY surface on the account.
+
+    Applied account-wide on purpose. A per-device fail mode would let somebody
+    believe they had chosen "block when you can't check" while a device they
+    forgot about kept failing open -- a security setting that is worse than
+    not having one, because it is believed.
+    """
+    sub = subscription_of(db, account)
+
+    if payload.fail_mode is not None:
+        if not protection_settings.is_valid_fail_mode(payload.fail_mode):
+            raise HTTPException(
+                status_code=400,
+                detail={"reason": "unknown_fail_mode",
+                        "allowed": list(protection_settings.FAIL_MODES)},
+            )
+        sub.fail_mode = payload.fail_mode
+
+    if payload.deep_inspection is not None:
+        sub.deep_inspection = bool(payload.deep_inspection)
+
+    db.commit()
+    db.refresh(sub)
+    logger.info(
+        "protection settings changed for %s: fail_mode=%s deep_inspection=%s",
+        sub.id, sub.fail_mode, sub.deep_inspection,
+    )
+    out = protection_settings.as_dict(sub)
+    out["fail_modes"] = list(protection_settings.FAIL_MODES)
+    return out
+
+
 @app.get("/presets")
 def list_presets() -> Dict[str, Any]:
     return {
@@ -550,6 +645,7 @@ async def safe_links(
     payload: CheckIn,
     account: Account = Depends(current_account),
     _ent: entitlements.Entitlement = Depends(require_protection),
+    settings: Dict[str, Any] = Depends(settings_of),
     x_device_id: Optional[str] = Header(default=None, alias="x-device-id"),
 ) -> Dict[str, Any]:
     if not payload.url:
@@ -578,7 +674,16 @@ async def safe_links(
     # Hand back the consumer block the gate already builds. `safe` there is a
     # bounded claim -- "nothing we checked came back bad" -- with
     # checks_performed alongside it. Do not flatten it into a boolean.
-    return {"consumer": body.get("consumer", {}), "device_id": body.get("device_id")}
+    # The fail mode rides along on EVERY check response, so a surface refreshes
+    # its cached copy on every success and can never be holding a stale one it
+    # did not know was stale. That matters because the setting is consulted
+    # precisely when this API is unreachable -- the one moment a surface
+    # cannot go and ask for it.
+    return {
+        "consumer": body.get("consumer", {}),
+        "device_id": body.get("device_id"),
+        "protection": settings,
+    }
 
 
 @app.post("/privacy-check")
@@ -586,6 +691,7 @@ async def privacy_check(
     payload: CheckIn,
     account: Account = Depends(current_account),
     _ent: entitlements.Entitlement = Depends(require_protection),
+    settings: Dict[str, Any] = Depends(settings_of),
     x_device_id: Optional[str] = Header(default=None, alias="x-device-id"),
 ) -> Dict[str, Any]:
     if not payload.text:
@@ -616,4 +722,5 @@ async def privacy_check(
         # not a scan that found nothing.
         "scan_complete": body.get("scan_complete", True),
         "checks_skipped_by_profile": body.get("checks_skipped_by_profile", []),
+        "protection": settings,
     }

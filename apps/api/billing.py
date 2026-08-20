@@ -65,12 +65,181 @@ SIGNATURE_TOLERANCE_SECONDS = int(os.getenv("STRIPE_SIGNATURE_TOLERANCE_S", "300
 CHECKOUT_SUCCESS_URL = os.getenv(
     "AIPROTECT_CHECKOUT_SUCCESS_URL", "https://app.aiprotect.app/welcome"
 )
+#: Where a cancelled checkout returns to. The PORTAL's picker, not the
+#: marketing site: the person is already signed in, and the marketing site has
+#: no /pricing route -- its pricing is an anchor on the home page, so the old
+#: default landed a customer who changed their mind on a 404.
 CHECKOUT_CANCEL_URL = os.getenv(
-    "AIPROTECT_CHECKOUT_CANCEL_URL", "https://aiprotect.app/pricing"
+    "AIPROTECT_CHECKOUT_CANCEL_URL", "https://app.aiprotect.app/plans"
 )
 PORTAL_RETURN_URL = os.getenv(
     "AIPROTECT_PORTAL_RETURN_URL", "https://app.aiprotect.app/settings"
 )
+
+
+#: Billing cadences. Annual is the default on the pricing page (~33% off,
+#: two months free) -- see docs/PRICING.md.
+CADENCES = ("monthly", "annual")
+
+#: Stripe price ids, resolved SERVER-SIDE from the tier the customer chose.
+#:
+#: WHY THE CLIENT DOES NOT GET TO NAME A PRICE
+#: ===========================================
+#: The tier is what grants entitlement -- it is stamped into the checkout
+#: session's metadata and read back by the webhook to set `subscription.tier`.
+#: The price id is what the customer is actually charged. If both arrive from
+#: the client as independent values, nothing binds them: a request for
+#: `tier=family` carrying Personal's price id buys 30 devices and 7 people for
+#: $4.99/mo, and every validation still passes because "family" IS a real
+#: tier and that price id IS a real price. The money and the entitlement have
+#: to be derived from ONE customer choice, and this is where that happens.
+_PRICE_ENV_TEMPLATE = "STRIPE_PRICE_{tier}_{cadence}"
+
+#: Stamped into the metadata of every checkout session and subscription this
+#: product creates, so an event can be recognised as ours from the payload
+#: alone.
+#:
+#: WHY THIS IS NEEDED. A Stripe webhook endpoint filters by event TYPE, not by
+#: product -- there is no setting that says "only send me AIProtect events".
+#: On an account selling more than one thing, this endpoint receives every
+#: `invoice.paid` and `customer.subscription.updated` on the account,
+#: including other products'. Telling them apart is the application's job.
+PRODUCT_TAG = "aiprotect"
+
+
+def our_price_ids() -> set:
+    """Every Stripe price this product sells, from the configured env vars."""
+    out = set()
+    for tier_name in entitlements.tier_names():
+        for cadence in CADENCES:
+            try:
+                out.add(price_id_for(tier=tier_name, cadence=cadence))
+            except BillingNotConfigured:
+                continue
+    return out
+
+
+def _event_metadata(obj: dict) -> dict:
+    return (obj.get("metadata") or {}) if isinstance(obj, dict) else {}
+
+
+def _prices_in(obj: dict) -> set:
+    """Price ids referenced anywhere in an event object.
+
+    Invoices carry theirs on line items rather than in metadata, which is why
+    matching cannot rely on metadata alone.
+    """
+    found = set()
+    price = obj.get("price")
+    if isinstance(price, dict) and price.get("id"):
+        found.add(price["id"])
+    elif isinstance(price, str):
+        found.add(price)
+
+    for line in ((obj.get("lines") or {}).get("data") or []):
+        if not isinstance(line, dict):
+            continue
+        lp = line.get("price")
+        if isinstance(lp, dict) and lp.get("id"):
+            found.add(lp["id"])
+        elif isinstance(lp, str):
+            found.add(lp)
+        # Newer API shapes put it under pricing.price_details.
+        pd = ((line.get("pricing") or {}).get("price_details") or {})
+        if pd.get("price"):
+            found.add(pd["price"])
+
+    for item in ((obj.get("items") or {}).get("data") or []):
+        if isinstance(item, dict):
+            ip = item.get("price")
+            if isinstance(ip, dict) and ip.get("id"):
+                found.add(ip["id"])
+            elif isinstance(ip, str):
+                found.add(ip)
+    return found
+
+
+def event_is_ours(event: dict, *, known_subscription_ids=frozenset()) -> bool:
+    """Is this event about something THIS product sold?
+
+    Positive identification only -- three independent signals, any one of
+    which is sufficient:
+
+      1. our PRODUCT_TAG in the object's metadata (checkout sessions and
+         subscriptions, which we stamp at creation)
+      2. a price id we sell (invoices, which carry prices on line items and do
+         not inherit the subscription's metadata)
+      3. a Stripe subscription id already in our own table
+
+    Deliberately NOT "the customer id is one we know". A person can buy this
+    product and another product on the same account with the same Stripe
+    Customer, and then an `invoice.payment_failed` for the OTHER product would
+    look like ours and push their AIProtect subscription into grace -- taking
+    protection they paid for toward `lapsed` because something unrelated
+    failed. Customer identity is not product identity.
+    """
+    obj = (event.get("data") or {}).get("object") or {}
+
+    if _event_metadata(obj).get("product") == PRODUCT_TAG:
+        return True
+
+    ours = our_price_ids()
+    if ours and (_prices_in(obj) & ours):
+        return True
+
+    sub_id = obj.get("id") if obj.get("object") == "subscription" else obj.get("subscription")
+    if sub_id and sub_id in known_subscription_ids:
+        return True
+
+    return False
+
+
+class BillingNotConfigured(Exception):
+    """A price the customer asked for has no Stripe price id configured.
+
+    Deliberately fatal to the request rather than falling back to any other
+    price. The failure mode of a fallback is charging someone for a plan they
+    did not choose, which is worse than a checkout button that refuses.
+    """
+
+
+def price_id_for(*, tier: str, cadence: str) -> str:
+    """The configured Stripe price for one (tier, cadence) pair.
+
+    Raises `BillingNotConfigured` when unset -- never guesses, never defaults
+    to another tier's price.
+    """
+    if cadence not in CADENCES:
+        raise BillingNotConfigured(f"unknown cadence {cadence!r}")
+    if tier not in entitlements.tier_names():
+        raise BillingNotConfigured(f"unknown tier {tier!r}")
+    name = _PRICE_ENV_TEMPLATE.format(tier=tier.upper(), cadence=cadence.upper())
+    price_id = os.getenv(name, "").strip()
+    if not price_id:
+        raise BillingNotConfigured(
+            f"{name} is not set; refusing to start a checkout for "
+            f"{tier}/{cadence} rather than charging an unrelated price"
+        )
+    return price_id
+
+
+def configured_prices() -> Dict[str, Dict[str, bool]]:
+    """Which (tier, cadence) pairs can actually be bought right now.
+
+    Surfaced so the plan picker can say "this plan is not available" instead
+    of rendering a Buy button that 503s on click.
+    """
+    out: Dict[str, Dict[str, bool]] = {}
+    for tier_name in entitlements.tier_names():
+        out[tier_name] = {}
+        for cadence in CADENCES:
+            try:
+                price_id_for(tier=tier_name, cadence=cadence)
+            except BillingNotConfigured:
+                out[tier_name][cadence] = False
+            else:
+                out[tier_name][cadence] = True
+    return out
 
 
 class WebhookError(Exception):
@@ -203,6 +372,17 @@ def _event_time(event: Dict[str, Any]) -> datetime:
     return datetime.fromtimestamp(int(event.get("created", 0)), tz=timezone.utc)
 
 
+def _known_subscription_ids(db: DbSession) -> frozenset:
+    """Stripe subscription ids this product already owns."""
+    return frozenset(
+        sid for (sid,) in db.execute(
+            select(Subscription.stripe_subscription_id).where(
+                Subscription.stripe_subscription_id.is_not(None)
+            )
+        ).all()
+    )
+
+
 def _find_subscription(db: DbSession, event: Dict[str, Any]) -> Optional[Subscription]:
     obj = (event.get("data") or {}).get("object") or {}
     sub_id = obj.get("id") if obj.get("object") == "subscription" else obj.get("subscription")
@@ -215,6 +395,13 @@ def _find_subscription(db: DbSession, event: Dict[str, Any]) -> Optional[Subscri
         if found:
             return found
     if customer_id:
+        # Only when the event has ALREADY been identified as ours by metadata
+        # or price. One person can hold one Stripe Customer across several of
+        # this account's products, so customer identity alone would let
+        # another product's `invoice.payment_failed` match this subscription
+        # and push a paying customer toward grace over something unrelated.
+        if not event_is_ours(event):
+            return None
         return db.scalars(
             select(Subscription).where(Subscription.stripe_customer_id == customer_id)
         ).first()
@@ -232,7 +419,21 @@ def handle_event(db: DbSession, event: Dict[str, Any]) -> WebhookOutcome:
     if not event_id:
         raise WebhookError("event has no id")
 
-    # 1. Replay. The primary key does the work: a duplicate insert raises, and
+    # 1. Is it even ours? Checked FIRST, before anything is written.
+    #
+    #    A Stripe endpoint cannot be scoped to a product, so on an account
+    #    selling more than one thing this receives every event of these types
+    #    for every product. Recording those in ProcessedWebhookEvent would let
+    #    another product's traffic grow this table without bound and turn the
+    #    replay log into a poor signal about our own billing.
+    #
+    #    Ack rather than error: a foreign event is not a failure, and a
+    #    permanently-failing endpoint eventually gets disabled by Stripe --
+    #    which would take the events we DO need with it.
+    if not event_is_ours(event, known_subscription_ids=_known_subscription_ids(db)):
+        return WebhookOutcome(False, "not this product's event")
+
+    # 2. Replay. The primary key does the work: a duplicate insert raises, and
     #    the handler below is never reached twice for the same event.
     db.add(ProcessedWebhookEvent(
         id=event_id, event_type=event_type, event_created=_event_time(event)
@@ -255,7 +456,7 @@ def handle_event(db: DbSession, event: Dict[str, Any]) -> WebhookOutcome:
                        event_id, event_type)
         return WebhookOutcome(False, "no matching subscription")
 
-    # 2. Order. Stripe guarantees delivery, not order.
+    # 3. Order. Stripe guarantees delivery, not order.
     occurred = _event_time(event)
     if (subscription.last_billing_event_at
             and occurred < subscription.last_billing_event_at):
@@ -376,9 +577,15 @@ def _stripe():
 
 
 def create_checkout_session(
-    *, account_email: str, tier: str, price_id: str, subscription_id: str
+    *, account_email: str, tier: str, cadence: str, subscription_id: str
 ) -> Dict[str, Any]:
-    """Start a subscription. Trial length comes from shared/tiers.json."""
+    """Start a subscription. Trial length comes from shared/tiers.json.
+
+    Takes the TIER the customer chose, not a price id -- the price is resolved
+    from it here so that the thing they are charged and the thing they are
+    granted cannot disagree. See `price_id_for`.
+    """
+    price_id = price_id_for(tier=tier, cadence=cadence)
     stripe = _stripe()
     session = stripe.checkout.Session.create(
         mode="subscription",
@@ -386,9 +593,23 @@ def create_checkout_session(
         line_items=[{"price": price_id, "quantity": 1}],
         subscription_data={
             "trial_period_days": entitlements.trial_days(),
-            "metadata": {"tier": tier, "subscription_id": subscription_id},
+            # `product` is what makes this recognisable as ours on the way
+            # back in -- see event_is_ours. It goes on the SUBSCRIPTION as
+            # well as the session, because the subscription is what later
+            # `customer.subscription.*` events carry.
+            "metadata": {
+                "product": PRODUCT_TAG,
+                "tier": tier,
+                "cadence": cadence,
+                "subscription_id": subscription_id,
+            },
         },
-        metadata={"tier": tier, "subscription_id": subscription_id},
+        metadata={
+            "product": PRODUCT_TAG,
+            "tier": tier,
+            "cadence": cadence,
+            "subscription_id": subscription_id,
+        },
         success_url=CHECKOUT_SUCCESS_URL,
         cancel_url=CHECKOUT_CANCEL_URL,
     )

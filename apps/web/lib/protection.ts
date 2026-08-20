@@ -76,6 +76,12 @@ export function statusBanner(e: Entitlement): StatusBanner {
       tone: "good",
       headline: "You're protected",
       detail: "You're on a free trial. We'll remind you before it ends.",
+      // The trial is the ONLY point at which choosing a plan is a normal
+      // thing to do rather than a recovery from something going wrong. First
+      // sign-in starts a Personal trial with no card (auth.py), so without
+      // this the funnel has no step where anybody is ever asked to pick one --
+      // the trial simply expires into grace.
+      action: { label: "Choose your plan", href: "/plans" },
       deadline: e.deadline,
     };
   }

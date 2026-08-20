@@ -92,27 +92,65 @@ export const signOutEverywhere = () =>
 
 /* ---------------- account ---------------- */
 
+export interface ProtectionSettings {
+  fail_mode: "open" | "closed";
+  /** Served WITH the value so a surface never invents its own wording. */
+  fail_mode_explanation: string;
+  deep_inspection: boolean;
+}
+
 export const getMe = () =>
   request<{
     account: { id: string; email: string };
     entitlement: Entitlement;
     devices_in_use: number;
+    protection: ProtectionSettings;
   }>("/me");
+
+/* ---------------- protection settings ---------------- */
+
+export const getProtectionSettings = () =>
+  request<ProtectionSettings & { fail_modes: Array<"open" | "closed"> }>(
+    "/protection-settings",
+    { method: "GET" }
+  );
+
+/**
+ * Change what EVERY surface on the account does.
+ *
+ * Account-wide by design: a per-device fail mode would let somebody believe
+ * they had chosen "block when you can't check" while a device they forgot
+ * about kept failing open.
+ */
+export const putProtectionSettings = (body: {
+  fail_mode?: "open" | "closed";
+  deep_inspection?: boolean;
+}) =>
+  request<ProtectionSettings & { fail_modes: Array<"open" | "closed"> }>(
+    "/protection-settings",
+    { method: "PUT", body: JSON.stringify(body) }
+  );
+
+export type Cadence = "monthly" | "annual";
+
+export interface TierRow {
+  display_name: string;
+  devices: number;
+  people: number;
+  price_monthly: number;
+  price_annual: number;
+}
 
 export const getTiers = () =>
   request<{
-    tiers: Record<
-      string,
-      {
-        display_name: string;
-        devices: number;
-        people: number;
-        price_monthly: number;
-        price_annual: number;
-      }
-    >;
+    tiers: Record<string, TierRow>;
     upgrade_path: string[];
     trial_days: number;
+    cadences: Cadence[];
+    /** Which (tier, cadence) pairs have a Stripe price configured. A plan
+     *  that is not purchasable says so, rather than rendering a Buy button
+     *  that 503s at the moment somebody decided to pay. */
+    purchasable: Record<string, Record<Cadence, boolean>>;
   }>("/tiers");
 
 /* ---------------- devices ---------------- */
@@ -185,10 +223,18 @@ export const checkPrivacy = (text: string, deviceId?: string) =>
 
 /* ---------------- billing ---------------- */
 
-export const startCheckout = (tier: string, priceId: string) =>
+/**
+ * Start a subscription.
+ *
+ * Takes the plan the person chose and NOTHING ELSE. The API resolves the
+ * Stripe price from the tier, because when the client names both the tier and
+ * the price they can disagree -- and the tier is what grants entitlement while
+ * the price is what gets charged. See apps/api/billing.py:price_id_for.
+ */
+export const startCheckout = (tier: string, cadence: Cadence) =>
   request<{ id: string; url: string }>("/billing/checkout", {
     method: "POST",
-    body: JSON.stringify({ tier, price_id: priceId }),
+    body: JSON.stringify({ tier, cadence }),
   });
 
 export const openBillingPortal = () =>
