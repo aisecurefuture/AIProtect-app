@@ -284,14 +284,21 @@ class UnusableEventsAreAcknowledged(unittest.TestCase):
         self.assertFalse(out.applied)
         self.assertEqual(out.reason, "event type not handled")
 
-    def test_an_event_for_an_unknown_subscription_is_acknowledged(self):
+    def test_an_event_we_cannot_place_is_acknowledged(self):
         """Retrying cannot conjure a row we do not have, and an endpoint that
         fails forever gets disabled by Stripe -- taking the events we DO need
-        with it."""
+        with it.
+
+        THE PROPERTY IS THE ACK, not the wording. This event carries no
+        product tag, no price we sell, and names a subscription no row knows,
+        so it is now classified as another product's -- which on a Stripe
+        account selling more than one thing is what it most likely is. The
+        'ours but orphaned' case is covered in
+        test_only_our_own_stripe_events_are_acted_on.py."""
         db = _db()
         out = billing.handle_event(db, _event("invoice.paid", evt_id="e_orphan"))
-        self.assertFalse(out.applied)
-        self.assertEqual(out.reason, "no matching subscription")
+        self.assertFalse(out.applied, "must be acknowledged, never retried forever")
+        self.assertEqual(out.reason, "not this product's event")
 
     def test_an_event_with_no_id_is_rejected(self):
         db = _db()

@@ -164,9 +164,74 @@ subscriptions.
 2. `docker compose ... up -d`
 3. Verify from **outside** the box, not from on it. A service can be healthy
    to itself and unreachable to the internet.
-4. Point the Stripe webhook at `https://api.aiprotect.app/billing/webhook` and
+4. **Verify the prices before taking any money.**
+
+   ```bash
+   STRIPE_SECRET_KEY=sk_... make verify-prices
+   ```
+
+   The six `STRIPE_PRICE_*` variables differ by one word and hold opaque,
+   nearly identical ids. Swap two and every check in the system still passes
+   -- the tier is real, the price is real, the checkout succeeds, the webhook
+   grants the tier -- and the customer pays Personal's price for Family's
+   entitlement. The only place the truth exists is inside Stripe, so this asks
+   Stripe and compares against `shared/tiers.json`. Non-zero exit means do not
+   deploy.
+
+   Prices created 2026-08-20, all six verified against `tiers.json` and
+   carrying no Stripe-side trial (the API sends the trial length from
+   `tiers.json` on every checkout; a second copy on the price would drift).
+
+5. Point the Stripe webhook at `https://api.aiprotect.app/billing/webhook` and
    send a test event. Until one arrives and returns 2xx, the billing path is
    unproven.
+
+   **Do not register it before the API is actually serving that host.** The
+   holding page answers **HTTP 200 to every path, including this one**, and
+   Stripe treats any 2xx as delivered-and-processed and never retries. A
+   customer would complete checkout, Stripe would post
+   `checkout.session.completed` to a static HTML page, get a 200, and the
+   subscription would never be created here — with a healthy green webhook in
+   the Stripe dashboard throughout. Confirm with the BODY, never the status:
+
+   ```bash
+   curl -s https://api.aiprotect.app/billing/webhook -X POST -d '{}' | head -c 80
+   ```
+
+   The API returns JSON (`invalid_webhook`, HTTP 400). The holding page
+   returns `<!doctype html>` and 200.
+
+   Select these seven event types — `HANDLED_EVENTS` in `apps/api/billing.py`:
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `customer.subscription.trial_will_end`, `invoice.paid`,
+   `invoice.payment_failed`. Anything else is acknowledged and ignored.
+
+   Set `STRIPE_WEBHOOK_SECRET` from the endpoint's signing secret. Unset is
+   deliberately fatal to the webhook — a misconfiguration must not become an
+   open endpoint a stranger can use to cancel anyone's subscription.
+
+### This Stripe account sells more than one product
+
+A Stripe endpoint is filtered by event **type**, not by product, so this one
+receives every `invoice.paid` and `customer.subscription.*` on the account.
+There is no Stripe-side setting that fixes this; it is handled in
+`billing.event_is_ours`, which identifies our events by our metadata tag, by a
+price id we sell, or by a subscription id already in our table — and
+deliberately **not** by customer id, because one person can hold one Stripe
+Customer across several of the account's products.
+
+Consequences to respect when adding products or prices:
+
+- **Every price AIProtect sells must be in the `STRIPE_PRICE_*` variables.**
+  Invoices do not inherit a subscription's metadata, so the price id is the
+  only signal on them. A price that exists in Stripe but not in the env is
+  invisible to `event_is_ours`, and its invoices will be classified as another
+  product's and ignored. `make verify-prices` catches the gap.
+- Subscriptions created before the metadata tag existed are matched by their
+  subscription id or price instead; nothing needs backfilling.
+
+Pinned by `apps/api/tests/test_only_our_own_stripe_events_are_acted_on.py`.
 
 ## Verifying
 
