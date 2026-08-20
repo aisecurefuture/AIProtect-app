@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
-    fastapi "uvicorn[standard]" pydantic sqlalchemy httpx cryptography stripe
+    fastapi "uvicorn[standard]" pydantic sqlalchemy alembic httpx cryptography stripe
 
 # The shared kernel. Not pip-installable (no pyproject/__init__ -- see
 # FORK-PROVENANCE.md), so it ships by COPY + PYTHONPATH like every other
@@ -27,6 +27,13 @@ ENV PYTHONPATH="/app/libs/cyberarmor-core:/app/libs/policy-engine:${PYTHONPATH:-
 ENV OPA_ENABLED=false
 
 COPY apps/api/*.py /app/
+
+# The migrations, and Alembic's config. NOT optional: init_db() runs
+# `alembic upgrade head` in-process on startup, so an image without these
+# starts and then fails on the first request -- or, worse, would start against
+# a schema nobody had migrated. The `*.py` glob above does not reach them.
+COPY apps/api/alembic.ini /app/
+COPY apps/api/migrations /app/migrations
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser && \
     chown -R appuser:appuser /app

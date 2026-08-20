@@ -39,8 +39,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-#: repo root -> shared/tiers.json. apps/api/entitlements.py -> parents[2].
-_TIERS_PATH = Path(__file__).resolve().parents[2] / "shared" / "tiers.json"
+import resources
+
+#: Searched for, not counted to. `parents[2]` is correct in the repository and
+#: raises IndexError in the image, where these modules are flattened into
+#: /app -- see resources.py.
+_TIERS_PATH = resources.find_resource(
+    "shared", "tiers.json", env_var="AIPROTECT_TIERS_PATH"
+)
 
 TRIALING = "trialing"
 ACTIVE = "active"

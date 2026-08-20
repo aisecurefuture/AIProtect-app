@@ -1,0 +1,57 @@
+# What Docker must NOT send as build context.
+#
+# WITHOUT THIS FILE the context is ~777 MB -- the whole repository, including
+# 351 MB of apps/web/node_modules that no image uses. On a normal disk that is
+# merely wasteful. On this working tree, which is iCloud-synced, it is fatal:
+# a build sat for twenty minutes without producing a layer, because the daemon
+# was still reading the context. Production builds images on the box
+# (docs/DEPLOY.md), so this is a deploy-time cost, not just a laptop one.
+#
+# Keep in step with what the Dockerfiles actually COPY:
+#   apps/api/{*.py,alembic.ini,migrations}   apps/web/   libs/   services/
+#   shared/{tiers,policy-fields}.json        scripts/security/
+
+# Version control
+.git
+.git.nosync
+.gitignore
+
+# Node. The web image runs its own `npm ci` and then COPY apps/web/ -- so
+# shipping the host's node_modules is not just slow, it OVERWRITES a correct
+# install with binaries built for the host's platform.
+**/node_modules
+**/.next
+**/npm-debug.log*
+
+# Python caches and virtualenvs
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.venv
+**/venv
+
+# Local databases. apps/api defaults to sqlite:///./aiprotect.db, so a
+# developer who has run the API has one of these sitting next to the source.
+# It must never be baked into an image.
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# Secrets. Belt and braces -- these should never be here, and if one is, it
+# must not become an image layer.
+.env
+.env.*
+**/*.pem
+**/*.key
+
+# Documentation and working material: never COPYed, always sent.
+docs/
+demo-videos/
+demo-range-prompts/
+**/*.pdf
+**/*.docx
+
+# Editor / OS noise
+.DS_Store
+**/.idea
+**/.vscode

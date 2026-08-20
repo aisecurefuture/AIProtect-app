@@ -37,3 +37,11 @@ local.properties
 apps/web/.next/
 apps/web/next-env.d.ts
 apps/web/tsconfig.tsbuildinfo
+
+# Local development databases. The API defaults to sqlite:///./aiprotect.db,
+# so running it in-place drops one next to the source -- and a committed
+# database is both a merge conflict nobody can resolve and, later, a way to
+# publish real customer rows.
+*.db
+*.sqlite
+*.sqlite3

@@ -37,11 +37,17 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_REPO = Path(__file__).resolve().parents[2]
+import resources
 
 # Order matters: the engine reads OPA_ENABLED at import time.
 os.environ.setdefault("OPA_ENABLED", "false")
-_ENGINE_DIR = str(_REPO / "libs" / "policy-engine")
+
+# Searched for, not counted to -- see resources.py. In the image this is
+# /app/libs/policy-engine (already on PYTHONPATH); in the repository it is
+# <repo>/libs/policy-engine.
+_ENGINE_DIR = str(
+    resources.find_directory("libs", "policy-engine", env_var="AIPROTECT_POLICY_ENGINE_DIR")
+)
 if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
 
